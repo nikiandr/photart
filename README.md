@@ -1,6 +1,38 @@
-# Tauri + React + Typescript
+# photart
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+A local photo inspector built with Tauri, React, TypeScript, and Vite.
+
+## Development
+
+Install dependencies and start the Vite app and Storybook together:
+
+```sh
+bun install
+bun run dev
+```
+
+The app is available at `http://localhost:1420` and Storybook at
+`http://localhost:6006`.
+
+To launch the Tauri desktop app in development mode (which also starts
+Storybook):
+
+```sh
+bun run tauri dev
+```
+
+To start either frontend server independently:
+
+```sh
+bun run dev:app
+bun run storybook
+```
+
+To create a static Storybook build:
+
+```sh
+bun run build-storybook
+```
 
 ## Recommended IDE Setup
 

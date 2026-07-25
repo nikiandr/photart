@@ -1,116 +1,302 @@
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafb);
-}
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 14px;
+  line-height: 1.5;
   font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
+  color: #1a1a1a;
+  background-color: #f4f4f5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
 }
 
-.container {
+* {
+  box-sizing: border-box;
+}
+
+body {
   margin: 0;
-  padding-top: 10vh;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  min-height: 100vh;
+  padding: 16px;
+  gap: 12px;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+.app-header {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+.app-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
 
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
 button {
   border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
+  border: 1px solid #d4d4d8;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
   font-weight: 500;
   font-family: inherit;
-  color: #0f0f0f;
+  color: #1a1a1a;
   background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
   cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
 }
 
 button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+  border-color: #71717a;
+  background-color: #fafafa;
 }
 
-input,
-button {
-  outline: none;
+button:disabled {
+  color: #71717a;
+  background-color: #f4f4f5;
+  border-color: #e4e4e7;
+  cursor: wait;
 }
 
-#greet-input {
-  margin-right: 5px;
+.banner {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.875rem;
+}
+
+.banner-error {
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.loading-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 420px;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  background-color: #ffffff;
+}
+
+.loading-spinner {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 3px solid #dbeafe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-title,
+.loading-subtitle {
+  margin: 0;
+}
+
+.loading-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.loading-subtitle {
+  margin-top: 2px;
+  color: #71717a;
+  font-size: 0.8125rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.drop-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 420px;
+  border: 2px dashed #d4d4d8;
+  border-radius: 12px;
+  background-color: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.drop-zone:hover,
+.drop-zone-active {
+  border-color: #3b82f6;
+  background-color: #f8fafc;
+}
+
+.drop-zone-title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.drop-zone-subtitle {
+  margin: 0;
+  color: #71717a;
+  font-size: 0.875rem;
+}
+
+.analysis-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 16px;
+  min-height: 0;
+}
+
+.preview-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: calc(100vh - 140px);
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.metadata-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  max-height: calc(100vh - 100px);
+}
+
+.metadata-section {
+  background-color: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.metadata-section h2 {
+  margin: 0 0 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #71717a;
+}
+
+.metadata-section dl {
+  margin: 0;
+}
+
+.info-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.8125rem;
+}
+
+.info-row dt {
+  margin: 0;
+  color: #71717a;
+}
+
+.info-row dd {
+  margin: 0;
+  word-break: break-word;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+    color: #f4f4f5;
+    background-color: #18181b;
   }
 
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
   button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+    color: #f4f4f5;
+    background-color: #27272a;
+    border-color: #3f3f46;
   }
-  button:active {
-    background-color: #0f0f0f69;
+
+  button:hover {
+    background-color: #3f3f46;
+    border-color: #71717a;
+  }
+
+  button:disabled {
+    color: #71717a;
+    background-color: #27272a;
+    border-color: #3f3f46;
+  }
+
+  .banner-error {
+    background-color: #450a0a;
+    border-color: #7f1d1d;
+    color: #fecaca;
+  }
+
+  .loading-state {
+    background-color: #27272a;
+    border-color: #3f3f46;
+  }
+
+  .loading-spinner {
+    border-color: #1e3a8a;
+    border-top-color: #60a5fa;
+  }
+
+  .drop-zone {
+    background-color: #27272a;
+    border-color: #3f3f46;
+  }
+
+  .drop-zone:hover,
+  .drop-zone-active {
+    background-color: #1e293b;
+    border-color: #3b82f6;
+  }
+
+  .drop-zone-subtitle,
+  .loading-subtitle,
+  .metadata-section h2,
+  .info-row dt {
+    color: #a1a1aa;
+  }
+
+  .preview-panel,
+  .metadata-section {
+    background-color: #27272a;
+    border-color: #3f3f46;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner {
+    animation-duration: 1.6s;
   }
 }

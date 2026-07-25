@@ -1,0 +1,15 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+# Install JS dependencies when a workspace is created. Rust crates are compiled
+# by cargo on the first `tauri dev` / `tauri build`.
+setup = "bun install"
+
+# Vite is pinned to port 1420 (strictPort) because Tauri requires a fixed dev
+# URL, so only one workspace can run the app at a time.
+run_mode = "nonconcurrent"
+
+[scripts.run.dev]
+command = "bun run tauri dev"
+default = true
+icon = "rocket"

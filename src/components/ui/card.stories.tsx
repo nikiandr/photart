@@ -31,28 +31,29 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
+  name: "Discrete object",
   render: () => (
     <Card>
-      <CardHeader>
-        <CardTitle>Photo details</CardTitle>
+      <CardHeader className="border-b">
+        <CardTitle>Export package</CardTitle>
         <CardDescription>
-          Metadata extracted from the selected image.
+          A discrete handoff object — not a photograph stage.
         </CardDescription>
         <CardAction>
-          <Badge variant="outline">JPEG</Badge>
+          <Badge variant="outline">Ready</Badge>
         </CardAction>
       </CardHeader>
       <CardContent>
-        <dl className="grid grid-cols-2 gap-3">
-          <dt className="text-muted-foreground">Dimensions</dt>
-          <dd className="text-right font-medium">4032 × 3024</dd>
-          <dt className="text-muted-foreground">File size</dt>
-          <dd className="text-right font-medium">4.8 MB</dd>
+        <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-sm">
+          <dt className="text-muted-foreground">Photographs</dt>
+          <dd className="font-mono text-[0.8125rem]">48</dd>
+          <dt className="text-muted-foreground">Destination</dt>
+          <dd className="font-mono text-[0.8125rem]">~/Pictures/Selects</dd>
         </dl>
       </CardContent>
       <CardFooter className="justify-end gap-2">
         <Button variant="ghost">Dismiss</Button>
-        <Button>View photo</Button>
+        <Button>Open folder</Button>
       </CardFooter>
     </Card>
   ),
@@ -62,10 +63,12 @@ export const Compact: Story = {
   render: () => (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>Camera</CardTitle>
-        <CardDescription>Apple iPhone 15 Pro</CardDescription>
+        <CardTitle>Nearby alternatives</CardTitle>
+        <CardDescription>3 frames within ±0.4 s</CardDescription>
       </CardHeader>
-      <CardContent>24 mm · ƒ/1.78 · 1/120 s · ISO 80</CardContent>
+      <CardContent className="font-mono text-[0.8125rem] text-muted-foreground">
+        −0.2 s · +0.1 s · +0.4 s
+      </CardContent>
     </Card>
   ),
 };

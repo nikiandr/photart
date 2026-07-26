@@ -1,19 +1,23 @@
-import { withThemeByClassName } from "@storybook/addon-themes";
+import { withThemeByDataAttribute } from "@storybook/addon-themes";
 import type { Preview } from "@storybook/react-vite";
 
-import "../src/App.css";
+import "../src/styles/globals.css";
 
 const preview: Preview = {
   decorators: [
-    withThemeByClassName({
+    withThemeByDataAttribute({
       themes: {
-        light: "",
-        dark: "dark",
+        Gallery: "gallery",
+        Review: "review",
       },
-      defaultTheme: "light",
+      defaultTheme: "Gallery",
+      attributeName: "data-atmosphere",
     }),
   ],
   parameters: {
+    backgrounds: {
+      disable: true,
+    },
     controls: {
       matchers: {
         color: /(background|color)$/i,

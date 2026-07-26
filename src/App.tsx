@@ -12,20 +12,10 @@ import { SpinnerGap } from "@phosphor-icons/react/dist/csr/SpinnerGap";
 import { UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
 import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import type { PhotoAnalysis, PhotoAnalysisError } from "./types";
-import "./App.css";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -43,9 +33,9 @@ function formatCoordinate(value: number | null): string {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-2.5 text-xs first:pt-0 last:pb-0">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 break-words text-right font-medium text-foreground">
+    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-2.5 text-sm first:pt-0 last:pb-0">
+      <dt className="font-sans text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words text-right font-mono text-[0.8125rem] font-medium text-foreground">
         {value}
       </dd>
     </div>
@@ -62,19 +52,15 @@ function MetadataSection({
   children: ReactNode;
 }) {
   return (
-    <Card size="sm">
-      <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <span className="text-muted-foreground" aria-hidden="true">
-            {icon}
-          </span>
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <dl className="divide-y divide-border">{children}</dl>
-      </CardContent>
-    </Card>
+    <section className="border-t border-border pt-4">
+      <h2 className="mb-2 flex items-center gap-2 font-sans text-sm font-medium text-foreground">
+        <span className="text-muted-foreground" aria-hidden="true">
+          {icon}
+        </span>
+        {title}
+      </h2>
+      <dl className="divide-y divide-border">{children}</dl>
+    </section>
   );
 }
 
@@ -141,18 +127,13 @@ function App() {
   );
 
   useEffect(() => {
-    const colorScheme = window.matchMedia("(prefers-color-scheme: dark)");
-    const syncColorScheme = () => {
-      document.documentElement.classList.toggle("dark", colorScheme.matches);
-    };
-
-    syncColorScheme();
-    colorScheme.addEventListener("change", syncColorScheme);
+    const atmosphere = analysis ? "review" : "gallery";
+    document.documentElement.setAttribute("data-atmosphere", atmosphere);
 
     return () => {
-      colorScheme.removeEventListener("change", syncColorScheme);
+      document.documentElement.setAttribute("data-atmosphere", "gallery");
     };
-  }, []);
+  }, [analysis]);
 
   useEffect(() => {
     let disposed = false;
@@ -188,7 +169,7 @@ function App() {
   const showUploader = !analysis && !loading;
 
   return (
-    <main className="min-h-svh bg-muted/30 p-3 sm:p-5" aria-busy={loading}>
+    <main className="min-h-svh bg-background p-3 sm:p-5" aria-busy={loading}>
       <div className="mx-auto flex min-h-[calc(100svh-1.5rem)] max-w-[1440px] flex-col gap-4 sm:min-h-[calc(100svh-2.5rem)]">
         <header className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -196,7 +177,7 @@ function App() {
               <ImageSquare className="size-5" weight="duotone" aria-hidden="true" />
             </div>
             <div className="min-w-0">
-              <h1 className="font-heading text-sm font-semibold tracking-tight">
+              <h1 className="font-sans text-sm font-semibold tracking-tight">
                 photart
               </h1>
               <p className="truncate text-xs text-muted-foreground">
@@ -235,36 +216,33 @@ function App() {
         ) : null}
 
         {loading ? (
-          <Card className="min-h-[32rem] flex-1">
-            <CardContent
-              className="flex flex-1 flex-col items-center justify-center gap-5 text-center"
-              role="status"
-              aria-live="polite"
-            >
-              <div className="flex size-14 items-center justify-center border bg-muted">
-                <SpinnerGap
-                  className="size-7 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <p className="font-heading text-sm font-medium">
-                  Analyzing your photo
-                </p>
-                <p className="max-w-sm text-xs/relaxed text-muted-foreground">
-                  Reading the image, generating a preview, and extracting its
-                  metadata.
-                </p>
-              </div>
-              <Badge variant="outline">Processing locally</Badge>
-            </CardContent>
-          </Card>
+          <div
+            className="flex min-h-[32rem] flex-1 flex-col items-center justify-center gap-5 text-center"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex size-14 items-center justify-center border border-border bg-muted">
+              <SpinnerGap
+                className="size-7 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <p className="font-sans text-sm font-medium">
+                Analyzing your photo
+              </p>
+              <p className="max-w-sm text-sm/relaxed text-muted-foreground">
+                Reading the image, generating a preview, and extracting its
+                metadata.
+              </p>
+            </div>
+          </div>
         ) : null}
 
         {showUploader ? (
-          <Card
+          <div
             className={cn(
-              "min-h-[32rem] flex-1 border border-dashed py-0 ring-0 transition-colors",
+              "flex min-h-[32rem] flex-1 border border-dashed transition-colors motion-reduce:transition-none",
               dragActive
                 ? "border-foreground bg-accent"
                 : "border-border bg-card",
@@ -276,25 +254,23 @@ function App() {
               className="h-full min-h-[32rem] w-full flex-1 flex-col gap-5 whitespace-normal rounded-none p-8 text-center hover:bg-muted/40"
               onClick={() => void handleChoosePhoto()}
             >
-              <span className="relative flex size-16 items-center justify-center border bg-background text-foreground shadow-xs">
+              <span className="relative flex size-16 items-center justify-center border border-border bg-background text-foreground">
                 <UploadSimple className="size-7" weight="duotone" aria-hidden="true" />
                 <span className="absolute -right-1.5 -bottom-1.5 size-3 bg-foreground" />
               </span>
 
               <span className="flex max-w-lg flex-col items-center gap-2">
-                <Badge variant={dragActive ? "default" : "secondary"}>
-                  {dragActive ? "Release to analyze" : "Local processing"}
-                </Badge>
-                <span className="font-heading text-lg font-medium tracking-tight">
+                <span className="font-sans text-lg font-medium tracking-tight">
                   {dragActive ? "Drop your photo here" : "Upload a photo"}
                 </span>
-                <span className="text-xs/relaxed font-normal text-muted-foreground">
-                  Drag and drop anywhere in this window, or click to choose a
-                  file from your Mac.
+                <span className="text-sm/relaxed font-normal text-muted-foreground">
+                  {dragActive
+                    ? "Release to analyze this file."
+                    : "Drag and drop anywhere in this window, or click to choose a file from your Mac."}
                 </span>
               </span>
 
-              <span className="flex items-center gap-2 text-[0.6875rem] font-normal text-muted-foreground">
+              <span className="flex items-center gap-2 font-mono text-[0.6875rem] font-normal text-muted-foreground">
                 <span>JPEG</span>
                 <span aria-hidden="true">·</span>
                 <span>PNG</span>
@@ -304,38 +280,36 @@ function App() {
                 <span>Up to 100 MiB</span>
               </span>
             </Button>
-          </Card>
+          </div>
         ) : null}
 
         {analysis ? (
           <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
-            <Card className="min-h-[32rem]">
-              <CardHeader className="border-b">
-                <CardTitle className="truncate pr-4">
-                  {analysis.fileName}
-                </CardTitle>
-                <CardDescription>
-                  {formatFileSize(analysis.fileSizeBytes)}
-                </CardDescription>
-                <CardAction className="flex items-center gap-1.5">
-                  <Badge variant="secondary">
+            <section className="flex min-h-[32rem] flex-col bg-stage text-stage-foreground">
+              <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-[0.8125rem] font-medium">
+                    {analysis.fileName}
+                  </p>
+                  <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                    {formatFileSize(analysis.fileSizeBytes)}
+                    <span aria-hidden="true"> · </span>
                     {analysis.format.toUpperCase()}
-                  </Badge>
-                  <Badge variant="outline">
+                    <span aria-hidden="true"> · </span>
                     {analysis.width} × {analysis.height}
-                  </Badge>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 items-center justify-center bg-muted/40 p-3">
+                  </p>
+                </div>
+              </div>
+              <div className="flex min-h-0 flex-1 items-center justify-center p-3">
                 <img
                   src={analysis.previewDataUrl}
                   alt={`Preview of ${analysis.fileName}`}
-                  className="max-h-[calc(100svh-11rem)] max-w-full object-contain shadow-sm"
+                  className="max-h-[calc(100svh-11rem)] max-w-full rounded-none object-contain"
                 />
-              </CardContent>
-            </Card>
+              </div>
+            </section>
 
-            <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-px">
+            <aside className="flex min-h-0 flex-col gap-1 overflow-y-auto pr-px">
               <MetadataSection
                 title="File"
                 icon={<FileImage className="size-4" />}
@@ -406,15 +380,17 @@ function App() {
                 />
               </MetadataSection>
 
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => void handleChoosePhoto()}
-              >
-                <ArrowClockwise data-icon="inline-start" aria-hidden="true" />
-                Analyze another photo
-              </Button>
+              <div className="pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => void handleChoosePhoto()}
+                >
+                  <ArrowClockwise data-icon="inline-start" aria-hidden="true" />
+                  Analyze another photo
+                </Button>
+              </div>
             </aside>
           </div>
         ) : null}

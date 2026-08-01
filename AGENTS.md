@@ -42,3 +42,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ### Smoke-testing the environment
 
 Basic verification is enough: confirm `bun run build` succeeds, optionally run the Rust checks above, and that `bun run tauri dev` (or `bun run dev:app`) starts and serves the UI. No need to exercise photo upload/analysis flows during environment setup.
+
+## Frontend design
+
+Before any frontend or UI work (components, screens, styling, typography, motion, UI copy), read and follow `.claude/skills/photart-design/SKILL.md`. It is the binding design guideline for this project: atmospheres, tokens, typography ladder, motion budget, and voice. Reference token values by name from `src/styles/globals.css`; rationale lives in `docs/design/design-philosophy.md`.

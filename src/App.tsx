@@ -1,401 +1,659 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Aperture } from "@phosphor-icons/react/dist/csr/Aperture";
-import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
-import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
-import { FileImage } from "@phosphor-icons/react/dist/csr/FileImage";
-import { ImageSquare } from "@phosphor-icons/react/dist/csr/ImageSquare";
-import { MapPin } from "@phosphor-icons/react/dist/csr/MapPin";
 import { SpinnerGap } from "@phosphor-icons/react/dist/csr/SpinnerGap";
-import { UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
-import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { cn } from "@/lib/utils";
-import type { PhotoAnalysis, PhotoAnalysisError } from "./types";
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+import { CatalogLocationStep } from "@/components/catalog/CatalogLocationStep";
+import { CatalogNameStep } from "@/components/catalog/CatalogNameStep";
+import { CatalogUnavailableView } from "@/components/catalog/CatalogUnavailableView";
+import { FatalConfigErrorView } from "@/components/catalog/FatalConfigErrorView";
+import { HomeView } from "@/components/workspace/HomeView";
+import { ImportProgressView } from "@/components/workspace/ImportProgressView";
+import { ShootConfirmView } from "@/components/workspace/ShootConfirmView";
+import { ShootView } from "@/components/workspace/ShootView";
+import { Sidebar, type SidebarActive } from "@/components/workspace/Sidebar";
+import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
+import {
+  createCatalog,
+  importShoot,
+  isConfigFatalError,
+  loadCatalogState,
+  loadShoot,
+  purgeShoot,
+  renameShoot,
+} from "@/lib/catalog";
+import { pathBasename } from "@/lib/names";
+import type {
+  CatalogError,
+  CatalogSnapshot,
+  ImportProgress,
+  ShootDetails,
+} from "@/types";
+
+const DEFAULT_CATALOG_NAME = "Photart Catalog";
+
+type AppView =
+  | { kind: "booting" }
+  | { kind: "setup-name"; catalogName: string }
+  | {
+      kind: "setup-location";
+      catalogName: string;
+      parentDirectory: string | null;
+      picturesDirectory: string | null;
+      error: string | null;
+      creating: boolean;
+    }
+  | { kind: "unavailable"; name: string; path: string; reason: string }
+  | { kind: "fatal-config"; error: CatalogError }
+  | { kind: "home"; catalog: CatalogSnapshot }
+  | {
+      kind: "confirm-shoot";
+      catalog: CatalogSnapshot;
+      sourcePath: string;
+      shootName: string;
+      error: string | null;
+      previous: "home" | { shootName: string };
+    }
+  | {
+      kind: "importing";
+      catalog: CatalogSnapshot;
+      sourcePath: string;
+      shootName: string;
+      progress: ImportProgress | null;
+      importId: string;
+      previous: "home" | { shootName: string };
+    }
+  | {
+      kind: "shoot";
+      catalog: CatalogSnapshot;
+      shoot: ShootDetails;
+      skippedNoticeCount: number | null;
+      loading?: boolean;
+    };
+
+function upsertShoot(
+  catalog: CatalogSnapshot,
+  shoot: ShootDetails,
+): CatalogSnapshot {
+  const summary = shoot.summary;
+  const shoots = [
+    summary,
+    ...catalog.shoots.filter((entry) => entry.name !== summary.name),
+  ];
+  return { ...catalog, shoots };
 }
 
-function formatCoordinate(value: number | null): string {
-  return value === null ? "—" : value.toFixed(6);
+function replaceShootSummary(
+  catalog: CatalogSnapshot,
+  previousName: string,
+  shoot: ShootDetails,
+): CatalogSnapshot {
+  return {
+    ...catalog,
+    shoots: catalog.shoots.map((entry) =>
+      entry.name === previousName ? shoot.summary : entry,
+    ),
+  };
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 py-2.5 text-sm first:pt-0 last:pb-0">
-      <dt className="font-sans text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 break-words text-right font-mono text-[0.8125rem] font-medium text-foreground">
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function MetadataSection({
-  title,
-  icon,
-  children,
-}: {
-  title: string;
-  icon: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="border-t border-border pt-4">
-      <h2 className="mb-2 flex items-center gap-2 font-sans text-sm font-medium text-foreground">
-        <span className="text-muted-foreground" aria-hidden="true">
-          {icon}
-        </span>
-        {title}
-      </h2>
-      <dl className="divide-y divide-border">{children}</dl>
-    </section>
-  );
+function removeShootSummary(
+  catalog: CatalogSnapshot,
+  shootName: string,
+): CatalogSnapshot {
+  return {
+    ...catalog,
+    shoots: catalog.shoots.filter((entry) => entry.name !== shootName),
+  };
 }
 
 function App() {
-  const [analysis, setAnalysis] = useState<PhotoAnalysis | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-  const requestIdRef = useRef(0);
+  const [view, setView] = useState<AppView>({ kind: "booting" });
+  const picturesDirectoryRef = useRef<string | null>(null);
+  const importCancelRef = useRef<(() => Promise<void>) | null>(null);
+  const shootRequestIdRef = useRef(0);
 
-  const analyzePath = useCallback(async (path: string) => {
-    const requestId = ++requestIdRef.current;
-    setLoading(true);
-    setError(null);
-    setAnalysis(null);
-
-    try {
-      const result = await invoke<PhotoAnalysis>("analyze_photo", { path });
-      if (requestId === requestIdRef.current) {
-        setAnalysis(result);
-        setError(null);
-      }
-    } catch (err) {
-      if (requestId === requestIdRef.current) {
-        const analysisError = err as PhotoAnalysisError;
-        const message =
-          analysisError.message ??
-          "Something went wrong while analyzing the photo.";
-        setAnalysis(null);
-        setError(message);
-      }
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setLoading(false);
-      }
-    }
+  useEffect(() => {
+    document.documentElement.setAttribute("data-atmosphere", "gallery");
   }, []);
 
-  const handleChoosePhoto = useCallback(async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        {
-          name: "Images",
-          extensions: ["jpg", "jpeg", "png", "webp"],
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const state = await loadCatalogState();
+        if (cancelled) {
+          return;
+        }
+
+        if (state.status === "setupRequired") {
+          picturesDirectoryRef.current = state.picturesDirectory;
+          setView({
+            kind: "setup-name",
+            catalogName: DEFAULT_CATALOG_NAME,
+          });
+          return;
+        }
+
+        if (state.status === "unavailable") {
+          picturesDirectoryRef.current = state.picturesDirectory;
+          setView({
+            kind: "unavailable",
+            name: state.name,
+            path: state.path,
+            reason: state.reason,
+          });
+          return;
+        }
+
+        setView({ kind: "home", catalog: state.catalog });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        const catalogError = error as CatalogError;
+        if (isConfigFatalError(catalogError)) {
+          setView({ kind: "fatal-config", error: catalogError });
+        } else {
+          setView({
+            kind: "fatal-config",
+            error: {
+              code: catalogError.code || "unknown",
+              message:
+                catalogError.message ||
+                "Photart couldn’t load your Catalog.",
+            },
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function pickDirectory(): Promise<string | null> {
+    const selected = await open({ directory: true, multiple: false });
+    if (selected === null) {
+      return null;
+    }
+    return typeof selected === "string" ? selected : selected[0] ?? null;
+  }
+
+  async function beginCreateShoot(
+    catalog: CatalogSnapshot,
+    previous: "home" | { shootName: string },
+  ) {
+    const sourcePath = await pickDirectory();
+    if (!sourcePath) {
+      return;
+    }
+    setView({
+      kind: "confirm-shoot",
+      catalog,
+      sourcePath,
+      shootName: pathBasename(sourcePath),
+      error: null,
+      previous,
+    });
+  }
+
+  async function openShoot(catalog: CatalogSnapshot, shootName: string) {
+    const requestId = ++shootRequestIdRef.current;
+    setView({
+      kind: "shoot",
+      catalog,
+      shoot: {
+        summary: {
+          name: shootName,
+          relativePath: shootName,
+          importedAt: "",
+          photographCount: 0,
+          skippedFileCount: 0,
         },
-      ],
+        photographs: [],
+      },
+      skippedNoticeCount: null,
+      loading: true,
     });
 
-    if (selected !== null) {
-      await analyzePath(selected);
-    }
-  }, [analyzePath]);
-
-  const handlePaths = useCallback(
-    async (paths: string[]) => {
-      if (paths.length > 1) {
-        setError("Please drop only one photo at a time.");
-      } else if (paths.length === 1) {
-        await analyzePath(paths[0]);
+    try {
+      const shoot = await loadShoot(shootName);
+      if (requestId !== shootRequestIdRef.current) {
+        return;
       }
-    },
-    [analyzePath],
-  );
-
-  useEffect(() => {
-    const atmosphere = analysis ? "review" : "gallery";
-    document.documentElement.setAttribute("data-atmosphere", atmosphere);
-
-    return () => {
-      document.documentElement.setAttribute("data-atmosphere", "gallery");
-    };
-  }, [analysis]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-
-    void getCurrentWebview()
-      .onDragDropEvent((event) => {
-        const payload = event.payload;
-
-        if (payload.type === "enter" || payload.type === "over") {
-          setDragActive(true);
-        } else if (payload.type === "leave") {
-          setDragActive(false);
-        } else if (payload.type === "drop") {
-          setDragActive(false);
-          void handlePaths(payload.paths);
-        }
-      })
-      .then((cleanup) => {
-        if (disposed) {
-          cleanup();
-        } else {
-          unlisten = cleanup;
-        }
+      setView({
+        kind: "shoot",
+        catalog,
+        shoot,
+        skippedNoticeCount: null,
+        loading: false,
       });
+    } catch {
+      if (requestId !== shootRequestIdRef.current) {
+        return;
+      }
+      setView({ kind: "home", catalog });
+    }
+  }
 
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [handlePaths]);
+  function startImport(args: {
+    catalog: CatalogSnapshot;
+    sourcePath: string;
+    shootName: string;
+    previous: "home" | { shootName: string };
+  }) {
+    const importId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `import-${Date.now()}`;
+    const shootName = args.shootName.trim();
 
-  const showUploader = !analysis && !loading;
+    // Commit the importing view before invoke so progress events have a home.
+    setView({
+      kind: "importing",
+      catalog: args.catalog,
+      sourcePath: args.sourcePath,
+      shootName,
+      progress: {
+        phase: "scanning",
+        copied: null,
+        total: null,
+        prepared: null,
+      },
+      importId,
+      previous: args.previous,
+    });
+
+    const { result, cancel } = importShoot(
+      {
+        sourcePath: args.sourcePath,
+        shootName,
+      },
+      (progress) => {
+        setView((current) =>
+          current.kind === "importing" && current.importId === importId
+            ? { ...current, progress }
+            : current,
+        );
+      },
+      importId,
+    );
+
+    importCancelRef.current = cancel;
+
+    void result
+      .then((imported) => {
+        importCancelRef.current = null;
+        const catalog = upsertShoot(args.catalog, imported.shoot);
+        setView({
+          kind: "shoot",
+          catalog,
+          shoot: imported.shoot,
+          skippedNoticeCount:
+            imported.skippedFileCount > 0 ? imported.skippedFileCount : null,
+          loading: false,
+        });
+      })
+      .catch((error: unknown) => {
+        importCancelRef.current = null;
+        const catalogError = error as CatalogError;
+        const cancelled =
+          catalogError.code === "import_cancelled" ||
+          /cancel/i.test(catalogError.message);
+
+        if (cancelled) {
+          setView({ kind: "home", catalog: args.catalog });
+          return;
+        }
+
+        setView({
+          kind: "confirm-shoot",
+          catalog: args.catalog,
+          sourcePath: args.sourcePath,
+          shootName: args.shootName,
+          error: catalogError.message,
+          previous: args.previous,
+        });
+      });
+  }
+
+  async function handleRenameShoot(shootName: string, newName: string) {
+    const renamed = await renameShoot(shootName, newName);
+    shootRequestIdRef.current += 1;
+
+    setView((current) => {
+      if (current.kind === "home") {
+        return {
+          ...current,
+          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+        };
+      }
+      if (current.kind === "confirm-shoot") {
+        return {
+          ...current,
+          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+          previous:
+            current.previous !== "home" &&
+            current.previous.shootName === shootName
+              ? { shootName: renamed.summary.name }
+              : current.previous,
+        };
+      }
+      if (current.kind === "importing") {
+        return {
+          ...current,
+          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+          previous:
+            current.previous !== "home" &&
+            current.previous.shootName === shootName
+              ? { shootName: renamed.summary.name }
+              : current.previous,
+        };
+      }
+      if (current.kind === "shoot") {
+        return {
+          ...current,
+          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+          shoot:
+            current.shoot.summary.name === shootName
+              ? renamed
+              : current.shoot,
+          loading:
+            current.shoot.summary.name === shootName
+              ? false
+              : current.loading,
+        };
+      }
+      return current;
+    });
+  }
+
+  async function handlePurgeShoot(shootName: string) {
+    await purgeShoot(shootName);
+    shootRequestIdRef.current += 1;
+
+    setView((current) => {
+      if (current.kind === "home") {
+        return {
+          ...current,
+          catalog: removeShootSummary(current.catalog, shootName),
+        };
+      }
+      if (current.kind === "confirm-shoot") {
+        return {
+          ...current,
+          catalog: removeShootSummary(current.catalog, shootName),
+          previous:
+            current.previous !== "home" &&
+            current.previous.shootName === shootName
+              ? "home"
+              : current.previous,
+        };
+      }
+      if (current.kind === "importing") {
+        return {
+          ...current,
+          catalog: removeShootSummary(current.catalog, shootName),
+          previous:
+            current.previous !== "home" &&
+            current.previous.shootName === shootName
+              ? "home"
+              : current.previous,
+        };
+      }
+      if (current.kind === "shoot") {
+        const catalog = removeShootSummary(current.catalog, shootName);
+        if (current.shoot.summary.name === shootName) {
+          return { kind: "home", catalog };
+        }
+        return { ...current, catalog };
+      }
+      return current;
+    });
+  }
+
+  function sidebarActive(current: AppView): SidebarActive | null {
+    if (current.kind === "home") {
+      return "home";
+    }
+    if (current.kind === "shoot") {
+      return { shootName: current.shoot.summary.name };
+    }
+    if (current.kind === "confirm-shoot") {
+      return current.previous === "home"
+        ? "home"
+        : { shootName: current.previous.shootName };
+    }
+    return null;
+  }
+
+  function catalogFromView(current: AppView): CatalogSnapshot | null {
+    if (
+      current.kind === "home" ||
+      current.kind === "confirm-shoot" ||
+      current.kind === "importing" ||
+      current.kind === "shoot"
+    ) {
+      return current.catalog;
+    }
+    return null;
+  }
+
+  if (view.kind === "booting") {
+    return (
+      <div className="flex h-svh w-full items-center justify-center overflow-hidden bg-background">
+        <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
+          <SpinnerGap
+            className="size-7 animate-spin motion-reduce:animate-none"
+            aria-hidden="true"
+          />
+          <p className="font-sans text-sm text-muted-foreground">Opening Photart…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (view.kind === "setup-name") {
+    return (
+      <div className="h-svh w-full overflow-hidden bg-background">
+        <CatalogNameStep
+          catalogName={view.catalogName}
+          onCatalogNameChange={(catalogName) =>
+            setView({ kind: "setup-name", catalogName })
+          }
+          onContinue={() =>
+            setView({
+              kind: "setup-location",
+              catalogName: view.catalogName.trim(),
+              parentDirectory: picturesDirectoryRef.current,
+              picturesDirectory: picturesDirectoryRef.current,
+              error: null,
+              creating: false,
+            })
+          }
+        />
+      </div>
+    );
+  }
+
+  if (view.kind === "setup-location") {
+    return (
+      <div className="h-svh w-full overflow-hidden bg-background">
+        <CatalogLocationStep
+          catalogName={view.catalogName}
+          parentDirectory={view.parentDirectory}
+          picturesDirectory={view.picturesDirectory}
+          error={view.error}
+          creating={view.creating}
+          onChooseDirectory={() => {
+            void (async () => {
+              const parentDirectory = await pickDirectory();
+              if (!parentDirectory) {
+                return;
+              }
+              setView((current) =>
+                current.kind === "setup-location"
+                  ? { ...current, parentDirectory, error: null }
+                  : current,
+              );
+            })();
+          }}
+          onBack={() =>
+            setView({
+              kind: "setup-name",
+              catalogName: view.catalogName,
+            })
+          }
+          onCreate={() => {
+            if (!view.parentDirectory || view.creating) {
+              return;
+            }
+            const parentDirectory = view.parentDirectory;
+            const catalogName = view.catalogName;
+            setView({ ...view, creating: true, error: null });
+            void createCatalog({ name: catalogName, parentDirectory })
+              .then((catalog) => {
+                setView({ kind: "home", catalog });
+              })
+              .catch((error: unknown) => {
+                const catalogError = error as CatalogError;
+                setView((current) =>
+                  current.kind === "setup-location"
+                    ? {
+                        ...current,
+                        creating: false,
+                        error: catalogError.message,
+                      }
+                    : current,
+                );
+              });
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (view.kind === "unavailable") {
+    return (
+      <div className="h-svh w-full overflow-hidden bg-background">
+        <CatalogUnavailableView
+          name={view.name}
+          path={view.path}
+          reason={view.reason}
+          onSetupNew={() =>
+            setView({
+              kind: "setup-name",
+              catalogName: DEFAULT_CATALOG_NAME,
+            })
+          }
+        />
+      </div>
+    );
+  }
+
+  if (view.kind === "fatal-config") {
+    return (
+      <div className="h-svh w-full overflow-hidden bg-background">
+        <FatalConfigErrorView error={view.error} />
+      </div>
+    );
+  }
+
+  const catalog = catalogFromView(view);
+  if (!catalog) {
+    return null;
+  }
+
+  const importing = view.kind === "importing";
+  const active = sidebarActive(view);
 
   return (
-    <main className="min-h-svh bg-background p-3 sm:p-5" aria-busy={loading}>
-      <div className="mx-auto flex min-h-[calc(100svh-1.5rem)] max-w-[1440px] flex-col gap-4 sm:min-h-[calc(100svh-2.5rem)]">
-        <header className="flex items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center bg-foreground text-background">
-              <ImageSquare className="size-5" weight="duotone" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="font-sans text-sm font-semibold tracking-tight">
-                photart
-              </h1>
-              <p className="truncate text-xs text-muted-foreground">
-                Local photo inspector
-              </p>
-            </div>
-          </div>
+    <WorkspaceShell
+      sidebar={
+        <Sidebar
+          catalogName={catalog.name}
+          shoots={catalog.shoots}
+          active={active}
+          disabled={importing}
+          onHome={() => {
+            if (importing) {
+              return;
+            }
+            shootRequestIdRef.current += 1;
+            setView({ kind: "home", catalog });
+          }}
+          onCreateShoot={() => {
+            if (importing) {
+              return;
+            }
+            const previous: "home" | { shootName: string } =
+              view.kind === "shoot"
+                ? { shootName: view.shoot.summary.name }
+                : "home";
+            void beginCreateShoot(catalog, previous);
+          }}
+          onSelectShoot={(shootName) => {
+            if (importing) {
+              return;
+            }
+            void openShoot(catalog, shootName);
+          }}
+          onRenameShoot={handleRenameShoot}
+          onPurgeShoot={handlePurgeShoot}
+        />
+      }
+    >
+      {view.kind === "home" ? (
+        <HomeView
+          onCreateShoot={() => void beginCreateShoot(view.catalog, "home")}
+        />
+      ) : null}
 
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void handleChoosePhoto()}
-            disabled={loading}
-          >
-            {loading ? (
-              <SpinnerGap
-                data-icon="inline-start"
-                className="animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : (
-              <UploadSimple data-icon="inline-start" aria-hidden="true" />
-            )}
-            {loading ? "Analyzing…" : "Choose photo"}
-          </Button>
-        </header>
+      {view.kind === "confirm-shoot" ? (
+        <ShootConfirmView
+          shootName={view.shootName}
+          sourcePath={view.sourcePath}
+          error={view.error}
+          onShootNameChange={(shootName) =>
+            setView({ ...view, shootName, error: null })
+          }
+          onCancel={() => {
+            if (view.previous === "home") {
+              setView({ kind: "home", catalog: view.catalog });
+              return;
+            }
+            void openShoot(view.catalog, view.previous.shootName);
+          }}
+          onImport={() =>
+            startImport({
+              catalog: view.catalog,
+              sourcePath: view.sourcePath,
+              shootName: view.shootName,
+              previous: view.previous,
+            })
+          }
+        />
+      ) : null}
 
-        <Separator />
+      {view.kind === "importing" ? (
+        <ImportProgressView
+          shootName={view.shootName}
+          progress={view.progress}
+          onCancel={() => {
+            void importCancelRef.current?.();
+          }}
+        />
+      ) : null}
 
-        {error ? (
-          <Alert variant="destructive">
-            <WarningCircle weight="fill" aria-hidden="true" />
-            <AlertTitle>Couldn’t analyze that photo</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {loading ? (
-          <div
-            className="flex min-h-[32rem] flex-1 flex-col items-center justify-center gap-5 text-center"
-            role="status"
-            aria-live="polite"
-          >
-            <div className="flex size-14 items-center justify-center border border-border bg-muted">
-              <SpinnerGap
-                className="size-7 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <p className="font-sans text-sm font-medium">
-                Analyzing your photo
-              </p>
-              <p className="max-w-sm text-sm/relaxed text-muted-foreground">
-                Reading the image, generating a preview, and extracting its
-                metadata.
-              </p>
-            </div>
-          </div>
-        ) : null}
-
-        {showUploader ? (
-          <div
-            className={cn(
-              "flex min-h-[32rem] flex-1 border border-dashed transition-colors motion-reduce:transition-none",
-              dragActive
-                ? "border-foreground bg-accent"
-                : "border-border bg-card",
-            )}
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-full min-h-[32rem] w-full flex-1 flex-col gap-5 whitespace-normal rounded-none p-8 text-center hover:bg-muted/40"
-              onClick={() => void handleChoosePhoto()}
-            >
-              <span className="relative flex size-16 items-center justify-center border border-border bg-background text-foreground">
-                <UploadSimple className="size-7" weight="duotone" aria-hidden="true" />
-                <span className="absolute -right-1.5 -bottom-1.5 size-3 bg-foreground" />
-              </span>
-
-              <span className="flex max-w-lg flex-col items-center gap-2">
-                <span className="font-sans text-lg font-medium tracking-tight">
-                  {dragActive ? "Drop your photo here" : "Upload a photo"}
-                </span>
-                <span className="text-sm/relaxed font-normal text-muted-foreground">
-                  {dragActive
-                    ? "Release to analyze this file."
-                    : "Drag and drop anywhere in this window, or click to choose a file from your Mac."}
-                </span>
-              </span>
-
-              <span className="flex items-center gap-2 font-mono text-[0.6875rem] font-normal text-muted-foreground">
-                <span>JPEG</span>
-                <span aria-hidden="true">·</span>
-                <span>PNG</span>
-                <span aria-hidden="true">·</span>
-                <span>WEBP</span>
-                <span aria-hidden="true">·</span>
-                <span>Up to 100 MiB</span>
-              </span>
-            </Button>
-          </div>
-        ) : null}
-
-        {analysis ? (
-          <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
-            <section className="flex min-h-[32rem] flex-col bg-stage text-stage-foreground">
-              <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
-                <div className="min-w-0">
-                  <p className="truncate font-mono text-[0.8125rem] font-medium">
-                    {analysis.fileName}
-                  </p>
-                  <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                    {formatFileSize(analysis.fileSizeBytes)}
-                    <span aria-hidden="true"> · </span>
-                    {analysis.format.toUpperCase()}
-                    <span aria-hidden="true"> · </span>
-                    {analysis.width} × {analysis.height}
-                  </p>
-                </div>
-              </div>
-              <div className="flex min-h-0 flex-1 items-center justify-center p-3">
-                <img
-                  src={analysis.previewDataUrl}
-                  alt={`Preview of ${analysis.fileName}`}
-                  className="max-h-[calc(100svh-11rem)] max-w-full rounded-none object-contain"
-                />
-              </div>
-            </section>
-
-            <aside className="flex min-h-0 flex-col gap-1 overflow-y-auto pr-px">
-              <MetadataSection
-                title="File"
-                icon={<FileImage className="size-4" />}
-              >
-                <InfoRow label="Name" value={analysis.fileName} />
-                <InfoRow
-                  label="Size"
-                  value={formatFileSize(analysis.fileSizeBytes)}
-                />
-                <InfoRow
-                  label="Format"
-                  value={analysis.format.toUpperCase()}
-                />
-                <InfoRow label="MIME" value={analysis.mimeType} />
-                <InfoRow
-                  label="Dimensions"
-                  value={`${analysis.width} × ${analysis.height}`}
-                />
-                <InfoRow label="Color" value={analysis.colorType} />
-              </MetadataSection>
-
-              <MetadataSection
-                title="Camera"
-                icon={<Camera className="size-4" />}
-              >
-                <InfoRow label="Make" value={analysis.exif.cameraMake ?? "—"} />
-                <InfoRow
-                  label="Model"
-                  value={analysis.exif.cameraModel ?? "—"}
-                />
-                <InfoRow label="Lens" value={analysis.exif.lensModel ?? "—"} />
-                <InfoRow
-                  label="Captured"
-                  value={analysis.exif.capturedAt ?? "—"}
-                />
-              </MetadataSection>
-
-              <MetadataSection
-                title="Exposure"
-                icon={<Aperture className="size-4" />}
-              >
-                <InfoRow
-                  label="Shutter"
-                  value={analysis.exif.exposureTime ?? "—"}
-                />
-                <InfoRow
-                  label="Aperture"
-                  value={analysis.exif.aperture ?? "—"}
-                />
-                <InfoRow label="ISO" value={analysis.exif.iso ?? "—"} />
-                <InfoRow
-                  label="Focal length"
-                  value={analysis.exif.focalLength ?? "—"}
-                />
-              </MetadataSection>
-
-              <MetadataSection
-                title="Location"
-                icon={<MapPin className="size-4" />}
-              >
-                <InfoRow
-                  label="Latitude"
-                  value={formatCoordinate(analysis.exif.latitude)}
-                />
-                <InfoRow
-                  label="Longitude"
-                  value={formatCoordinate(analysis.exif.longitude)}
-                />
-              </MetadataSection>
-
-              <div className="pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => void handleChoosePhoto()}
-                >
-                  <ArrowClockwise data-icon="inline-start" aria-hidden="true" />
-                  Analyze another photo
-                </Button>
-              </div>
-            </aside>
-          </div>
-        ) : null}
-      </div>
-    </main>
+      {view.kind === "shoot" ? (
+        <ShootView
+          shoot={view.shoot}
+          skippedNoticeCount={view.skippedNoticeCount}
+          loading={view.loading}
+        />
+      ) : null}
+    </WorkspaceShell>
   );
 }
 

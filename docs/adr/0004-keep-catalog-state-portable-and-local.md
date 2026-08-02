@@ -1,0 +1,3 @@
+# Keep Catalog state portable and local
+
+Photart points at the active Catalog from native app configuration, but keeps Shoot and photograph metadata in a portable Catalog-local manifest beside the photographer’s visible folders. App config stores only the Catalog name and absolute path so relaunches can find the same Catalog; the hidden `.photart` tree owns the authoritative index, staged imports, and derived thumbnails. Visible Shoot folders remain ordinary filesystem copies of the Source, never inferred from modification times, so ordering and identity stay explicit and the Catalog can move with the photographer without reconstructing history from the OS.

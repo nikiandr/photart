@@ -1,3 +1,4 @@
+import { PhotartBrand } from "@/components/brand/PhotartBrand";
 import type { CatalogError } from "@/types";
 
 export type FatalConfigErrorViewProps = {
@@ -8,9 +9,7 @@ export function FatalConfigErrorView({ error }: FatalConfigErrorViewProps) {
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-6">
       <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
-        <p className="font-sans text-xs font-medium tracking-wide text-muted-foreground lowercase">
-          photart
-        </p>
+        <PhotartBrand layout="stack" />
         <h1 className="font-editorial text-2xl font-medium tracking-tight text-foreground">
           Photart can&apos;t start
         </h1>

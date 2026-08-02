@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
 import { House } from "@phosphor-icons/react/dist/csr/House";
-import { ImageSquare } from "@phosphor-icons/react/dist/csr/ImageSquare";
 import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
+import { PhotartBrand } from "@/components/brand/PhotartBrand";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -122,17 +122,7 @@ export function Sidebar({
       aria-disabled={disabled || undefined}
     >
       <div className="shrink-0 border-b border-sidebar-border px-3 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex size-8 shrink-0 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">
-            <ImageSquare className="size-4" weight="duotone" aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <p className="font-sans text-xs font-semibold tracking-tight lowercase">
-              photart
-            </p>
-            <p className="truncate text-xs text-muted-foreground">{catalogName}</p>
-          </div>
-        </div>
+        <PhotartBrand detail={catalogName} />
       </div>
 
       <div className="shrink-0 px-2 pt-2">

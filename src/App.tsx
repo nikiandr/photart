@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { SpinnerGap } from "@phosphor-icons/react/dist/csr/SpinnerGap";
 
+import { PhotartMark } from "@/components/brand/PhotartMark";
 import { CatalogLocationStep } from "@/components/catalog/CatalogLocationStep";
 import { CatalogNameStep } from "@/components/catalog/CatalogNameStep";
 import { CatalogUnavailableView } from "@/components/catalog/CatalogUnavailableView";
@@ -443,12 +444,15 @@ function App() {
   if (view.kind === "booting") {
     return (
       <div className="flex h-svh w-full items-center justify-center overflow-hidden bg-background">
-        <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
-          <SpinnerGap
-            className="size-7 animate-spin motion-reduce:animate-none"
-            aria-hidden="true"
-          />
-          <p className="font-sans text-sm text-muted-foreground">Opening Photart…</p>
+        <div role="status" aria-live="polite" className="flex flex-col items-center gap-4">
+          <PhotartMark className="size-12" />
+          <div className="flex flex-col items-center gap-3">
+            <SpinnerGap
+              className="size-5 animate-spin motion-reduce:animate-none text-muted-foreground"
+              aria-hidden="true"
+            />
+            <p className="font-sans text-sm text-muted-foreground">Opening Photart…</p>
+          </div>
         </div>
       </div>
     );

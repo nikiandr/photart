@@ -12,6 +12,7 @@ dist
 dist-ssr
 storybook-static
 *.local
+photart.config.json
 
 # Editor directories and files
 .vscode/*

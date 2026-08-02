@@ -40,6 +40,7 @@ Configuration that matters:
 
 - `src-tauri/tauri.conf.json` — app identity, window config, bundling, and the dev/build hooks (it runs the `bun run dev`/`bun run build` scripts).
 - `src-tauri/capabilities/default.json` — permission allowlist for the main window. Tauri plugin APIs are denied by default; when adding a plugin, its permissions must be added here (and the plugin registered in `run()` plus added to both `Cargo.toml` and `package.json`).
+- Runtime app data such as the catalogue path is stored as JSON through `src-tauri/src/app_config.rs`. Debug builds use the gitignored `photart.config.json` in the project root. Release builds use `config.json` inside Tauri's OS-specific app config directory (`~/Library/Application Support/com.nikitafordui.photart` on macOS, `%APPDATA%/com.nikitafordui.photart` on Windows, and `$XDG_CONFIG_HOME/com.nikitafordui.photart` or `~/.config/com.nikitafordui.photart` on Linux). The file is created with defaults on first launch.
 
 ## CI (.github/workflows)
 

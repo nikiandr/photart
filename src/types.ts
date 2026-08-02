@@ -27,3 +27,8 @@ export interface PhotoAnalysisError {
   code: string;
   message: string;
 }
+
+export interface AppConfig {
+  schemaVersion: number;
+  cataloguePath: string | null;
+}

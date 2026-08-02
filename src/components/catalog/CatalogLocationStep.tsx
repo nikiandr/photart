@@ -1,6 +1,7 @@
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { SpinnerGap } from "@phosphor-icons/react/dist/csr/SpinnerGap";
 
+import { PhotartBrand } from "@/components/brand/PhotartBrand";
 import { Button } from "@/components/ui/button";
 import { homePathDisplay } from "@/lib/catalog";
 
@@ -33,16 +34,16 @@ export function CatalogLocationStep({
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-6">
       <div className="flex w-full max-w-md flex-col gap-6">
-        <div className="space-y-2 text-center">
-          <p className="font-sans text-xs font-medium tracking-wide text-muted-foreground lowercase">
-            photart
-          </p>
-          <h1 className="font-editorial text-3xl font-medium tracking-tight text-foreground">
-            Choose a location
-          </h1>
-          <p className="text-sm/relaxed text-muted-foreground">
-            Photart will create a folder for your Catalog here.
-          </p>
+        <div className="space-y-4 text-center">
+          <PhotartBrand layout="stack" />
+          <div className="space-y-2">
+            <h1 className="font-editorial text-3xl font-medium tracking-tight text-foreground">
+              Choose a location
+            </h1>
+            <p className="text-sm/relaxed text-muted-foreground">
+              Photart will create a folder for your Catalog here.
+            </p>
+          </div>
         </div>
 
         <div className="space-y-3">

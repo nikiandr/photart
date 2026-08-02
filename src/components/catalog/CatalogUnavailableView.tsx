@@ -1,5 +1,6 @@
 import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
 
+import { PhotartBrand } from "@/components/brand/PhotartBrand";
 import { Button } from "@/components/ui/button";
 import { shortenAbsolutePath } from "@/lib/catalog";
 
@@ -19,10 +20,8 @@ export function CatalogUnavailableView({
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-6">
       <div className="flex w-full max-w-lg flex-col items-center gap-6 text-center">
-        <div className="space-y-3">
-          <p className="font-sans text-xs font-medium tracking-wide text-muted-foreground lowercase">
-            photart
-          </p>
+        <div className="space-y-4">
+          <PhotartBrand layout="stack" />
           <div className="flex flex-col items-center gap-3">
             <WarningCircle
               className="size-8 text-muted-foreground"

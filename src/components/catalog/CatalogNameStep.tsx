@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 
+import { PhotartBrand } from "@/components/brand/PhotartBrand";
 import { Button } from "@/components/ui/button";
 import { validateName } from "@/lib/names";
 import { cn } from "@/lib/utils";
@@ -37,10 +38,8 @@ export function CatalogNameStep({
         onSubmit={handleSubmit}
         noValidate
       >
-        <div className="space-y-2 text-center">
-          <p className="font-sans text-xs font-medium tracking-wide text-muted-foreground lowercase">
-            photart
-          </p>
+        <div className="space-y-4 text-center">
+          <PhotartBrand layout="stack" />
           <h1 className="font-editorial text-3xl font-medium tracking-tight text-foreground">
             Name your Catalog
           </h1>

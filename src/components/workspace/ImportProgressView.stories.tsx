@@ -28,7 +28,6 @@ export const Scanning: Story = {
   args: {
     progress: {
       phase: "scanning",
-      copied: null,
       total: null,
       prepared: null,
     },
@@ -39,20 +38,8 @@ export const Preparing: Story = {
   args: {
     progress: {
       phase: "preparing",
-      copied: null,
       total: 128,
       prepared: 37,
-    },
-  },
-};
-
-export const Copying: Story = {
-  args: {
-    progress: {
-      phase: "copying",
-      copied: 42,
-      total: 128,
-      prepared: 128,
     },
   },
 };
@@ -61,7 +48,6 @@ export const Finalizing: Story = {
   args: {
     progress: {
       phase: "finalizing",
-      copied: 128,
       total: 128,
       prepared: 128,
     },

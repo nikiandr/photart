@@ -51,8 +51,7 @@ export type CatalogStateResponse =
     };
 
 export type ImportProgress = {
-  phase: "scanning" | "preparing" | "copying" | "finalizing" | string;
-  copied: number | null;
+  phase: "scanning" | "preparing" | "finalizing" | string;
   total: number | null;
   prepared: number | null;
 };

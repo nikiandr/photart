@@ -45,8 +45,8 @@ function presentProgress(progress: ImportProgress | null): ProgressPresentation 
       const total = progress.total ?? 0;
       if (total > 0) {
         return {
-          label: "Preparing photographs…",
-          detail: `Prepared ${prepared} of ${total}`,
+          label: "Copying photographs…",
+          detail: `Copied ${prepared} of ${total}`,
           indeterminate: false,
           value: prepared,
           max: total,
@@ -54,30 +54,8 @@ function presentProgress(progress: ImportProgress | null): ProgressPresentation 
         };
       }
       return {
-        label: "Preparing photographs…",
-        detail: "Checking image files and building thumbnails.",
-        indeterminate: true,
-        value: 0,
-        max: 1,
-        percent: null,
-      };
-    }
-    case "copying": {
-      const copied = progress.copied ?? 0;
-      const total = progress.total ?? 0;
-      if (total > 0) {
-        return {
-          label: "Copying photographs…",
-          detail: `Copied ${copied} of ${total} photographs`,
-          indeterminate: false,
-          value: copied,
-          max: total,
-          percent: Math.round((copied / total) * 100),
-        };
-      }
-      return {
         label: "Copying photographs…",
-        detail: null,
+        detail: "Reading image files and building thumbnails.",
         indeterminate: true,
         value: 0,
         max: 1,

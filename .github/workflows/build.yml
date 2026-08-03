@@ -1,0 +1,85 @@
+name: Build
+
+# Builds the Tauri desktop app for macOS and Windows.
+#
+# - On pushes to `main`, pull requests, or manual runs, it compiles the app on
+#   each platform and uploads the installers/bundles as workflow artifacts so you
+#   can download and test them.
+# - When you push a tag like `v0.1.0`, it additionally creates a draft GitHub
+#   Release with the installers attached. Edit and publish the release when ready.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    permissions:
+      contents: write # needed to create the GitHub Release on tag pushes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # A single universal binary that runs on both Apple Silicon and Intel Macs.
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            bundle-path: 'src-tauri/target/universal-apple-darwin/release/bundle'
+          - platform: windows-latest
+            args: ''
+            rust-targets: ''
+            bundle-path: 'src-tauri/target/release/bundle'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build app
+        uses: tauri-apps/tauri-action@v1
+        id: tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # When a `v*` tag is pushed these are set and a draft release is created;
+          # otherwise they are empty and the action only builds the app.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('photart {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: photart-${{ runner.os }}
+          path: ${{ matrix.bundle-path }}
+          if-no-files-found: warn
+          retention-days: 14

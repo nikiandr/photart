@@ -91,7 +91,6 @@ pub struct CreateCatalogInput {
 #[serde(rename_all = "camelCase")]
 pub struct ImportProgress {
     pub phase: String,
-    pub copied: Option<u32>,
     pub total: Option<u32>,
     pub prepared: Option<u32>,
 }
@@ -344,6 +343,10 @@ mod tests {
         std::fs::write(source.path().join("broken.jpg"), b"not-a-jpeg").unwrap();
         std::fs::create_dir_all(source.path().join("day2/nested")).unwrap();
         std::fs::write(source.path().join("day2/nested/skip.tiff"), b"tiff").unwrap();
+        // A folder whose only supported-looking photograph fails to decode. It must
+        // not survive into the Catalog as an empty directory.
+        std::fs::create_dir_all(source.path().join("day3")).unwrap();
+        std::fs::write(source.path().join("day3/corrupt.png"), b"not-a-png").unwrap();
 
         let original_a = std::fs::read(source.path().join("day1/a.png")).unwrap();
         let cancel = AtomicBool::new(false);
@@ -359,7 +362,6 @@ mod tests {
 
         assert!(phases.iter().any(|p| p == "scanning"));
         assert!(phases.iter().any(|p| p == "preparing"));
-        assert!(phases.iter().any(|p| p == "copying"));
         assert!(phases.iter().any(|p| p == "finalizing"));
 
         assert_eq!(result.shoot.summary.photograph_count, 2);
@@ -368,6 +370,10 @@ mod tests {
         let copied = catalog_path.join("Spring Shoot/day1/a.png");
         assert!(copied.exists());
         assert_eq!(std::fs::read(&copied).unwrap(), original_a);
+
+        // Folders that contributed no photograph leave no trace in the Catalog.
+        assert!(!catalog_path.join("Spring Shoot/day3").exists());
+        assert!(!catalog_path.join("Spring Shoot/day2/nested").exists());
 
         let details = get_shoot(&catalog_path, "Spring Shoot").unwrap();
         let paths: Vec<_> = details

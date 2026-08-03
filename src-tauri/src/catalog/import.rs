@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{SecondsFormat, Utc};
+use rayon::prelude::*;
 
 use crate::image_processing::{self, prepare_photograph};
 
@@ -116,9 +117,9 @@ fn next_import_id() -> String {
 
 #[derive(Default)]
 pub(crate) struct ImportFaults {
-    /// Cancel is checked; additionally fail after N prepared photographs (0 = disabled).
+    /// Fail after N photographs begin prepare (0 = disabled).
     pub fail_after_prepared: Option<u32>,
-    /// Fail after N successful copies (0 = disabled).
+    /// Fail after N photographs begin the staged original write (0 = disabled).
     pub fail_after_copied: Option<u32>,
     /// Fail during commit after files are moved but before manifest write.
     pub fail_before_manifest: bool,
@@ -248,7 +249,6 @@ pub(crate) fn import_shoot_inner(
 
         progress(ImportProgress {
             phase: "scanning".into(),
-            copied: None,
             total: None,
             prepared: None,
         });
@@ -258,16 +258,22 @@ pub(crate) fn import_shoot_inner(
 
         progress(ImportProgress {
             phase: "preparing".into(),
-            copied: None,
             total: Some(scan.candidates.len() as u32),
             prepared: Some(0),
         });
 
-        let prepared = prepare_candidates(
-            &source_path,
+        // Single-pass ingest: read each source file once, build the thumbnail,
+        // and write the original bytes to staging (no second source read).
+        // Because copying is no longer a separate pass, "preparing" is the only
+        // per-photograph phase the UI reports.
+        let prepared = ingest_candidates(
+            &IngestContext {
+                source_path: &source_path,
+                staging_shoot: &staging_shoot,
+                staging_thumbnails: &staging_thumbnails,
+                shoot_name: &shoot_name,
+            },
             &scan.candidates,
-            &staging_thumbnails,
-            &shoot_name,
             progress,
             cancel,
             faults,
@@ -282,24 +288,7 @@ pub(crate) fn import_shoot_inner(
 
         let total = prepared.len() as u32;
         progress(ImportProgress {
-            phase: "copying".into(),
-            copied: Some(0),
-            total: Some(total),
-            prepared: Some(total),
-        });
-
-        copy_originals(
-            &source_path,
-            &staging_shoot,
-            &prepared,
-            progress,
-            cancel,
-            faults,
-        )?;
-
-        progress(ImportProgress {
             phase: "finalizing".into(),
-            copied: Some(total),
             total: Some(total),
             prepared: Some(total),
         });
@@ -552,145 +541,183 @@ struct PreparedItem {
     width: u32,
     height: u32,
     thumbnail_relative_path: String,
-    source_absolute: PathBuf,
 }
 
-fn prepare_candidates(
-    source_path: &Path,
+enum IngestWorkerResult {
+    Ready(PreparedItem),
+    Skipped,
+    Failed(CatalogError),
+}
+
+/// The fixed locations an ingest works against, bundled so the worker closure
+/// (and `ingest_candidates` itself) stays to a readable argument list.
+struct IngestContext<'a> {
+    source_path: &'a Path,
+    staging_shoot: &'a Path,
+    staging_thumbnails: &'a Path,
+    shoot_name: &'a str,
+}
+
+fn ingest_chunk_size() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get().saturating_mul(2))
+        .unwrap_or(8)
+        .clamp(4, 32)
+}
+
+/// Read each candidate once, generate its thumbnail, and write the original
+/// bytes to staging.
+///
+/// Work is parallelized in bounded chunks so progress reporting and cancellation
+/// checkpoints stay on the main thread between chunks. Chunking does not bound
+/// memory: each worker drops its `bytes` before returning, so peak usage is
+/// roughly `rayon threads × largest file`, independent of `chunk_size`.
+///
+/// Note this deliberately writes the bytes already in memory rather than calling
+/// `fs::copy`. That trades away `fs::copy`'s macOS `fclonefileat` fast path and
+/// its permission-bit preservation in exchange for never reading the source
+/// twice — the right side of the trade when importing from a slow SD card, which
+/// is the common case, and where the source is a different volume anyway.
+fn ingest_candidates(
+    ctx: &IngestContext,
     candidates: &[String],
-    staging_thumbnails: &Path,
-    shoot_name: &str,
     progress: &mut dyn FnMut(ImportProgress),
     cancel: &AtomicBool,
     faults: &ImportFaults,
 ) -> Result<Vec<PreparedItem>, CatalogError> {
-    let mut prepared = Vec::new();
     let total = candidates.len() as u32;
+    let chunk_size = ingest_chunk_size();
+    let prepared_slots = AtomicU32::new(0);
+    let copied_slots = AtomicU32::new(0);
+    let mut prepared = Vec::with_capacity(candidates.len());
 
-    for (index, relative) in candidates.iter().enumerate() {
+    for chunk in candidates.chunks(chunk_size) {
         check_cancel(cancel)?;
 
-        if let Some(limit) = faults.fail_after_prepared {
-            if prepared.len() as u32 >= limit {
-                return Err(CatalogError::new(
-                    "import_fault",
-                    "Injected failure during prepare.",
-                ));
+        let results: Vec<IngestWorkerResult> = chunk
+            .par_iter()
+            .map(|relative| {
+                if cancel.load(Ordering::SeqCst) {
+                    return IngestWorkerResult::Failed(CatalogError::new(
+                        "import_cancelled",
+                        "Shoot import was cancelled.",
+                    ));
+                }
+
+                if let Some(limit) = faults.fail_after_prepared {
+                    let slot = prepared_slots.fetch_add(1, Ordering::SeqCst);
+                    if slot >= limit {
+                        return IngestWorkerResult::Failed(CatalogError::new(
+                            "import_fault",
+                            "Injected failure during prepare.",
+                        ));
+                    }
+                }
+
+                let source_absolute = ctx.source_path.join(Path::new(relative));
+                let bytes = match fs::read(&source_absolute) {
+                    Ok(bytes) => bytes,
+                    Err(_) => return IngestWorkerResult::Skipped,
+                };
+
+                let photograph = match prepare_photograph(&bytes) {
+                    Ok(photograph) => photograph,
+                    Err(_) => return IngestWorkerResult::Skipped,
+                };
+
+                let thumb_name = thumbnail_file_name(relative);
+                let thumb_staging_path = ctx.staging_thumbnails.join(&thumb_name);
+                if let Err(error) = fs::write(&thumb_staging_path, &photograph.thumbnail_jpeg) {
+                    return IngestWorkerResult::Failed(CatalogError::new(
+                        "thumbnail_write",
+                        format!(
+                            "Could not write staged thumbnail at {}: {error}",
+                            thumb_staging_path.display()
+                        ),
+                    ));
+                }
+
+                if let Some(limit) = faults.fail_after_copied {
+                    let slot = copied_slots.fetch_add(1, Ordering::SeqCst);
+                    if slot >= limit {
+                        return IngestWorkerResult::Failed(CatalogError::new(
+                            "import_fault",
+                            "Injected failure during copy.",
+                        ));
+                    }
+                }
+
+                let destination = ctx.staging_shoot.join(Path::new(relative));
+                // Created lazily, per photograph that actually survived prepare, so
+                // a source folder whose files all skipped never reaches the Catalog
+                // as an empty directory. `create_dir_all` tolerates the races
+                // between workers sharing a parent.
+                if let Some(parent) = destination.parent() {
+                    if let Err(error) = fs::create_dir_all(parent) {
+                        return IngestWorkerResult::Failed(CatalogError::new(
+                            "import_copy",
+                            format!(
+                                "Could not create destination folder at {}: {error}",
+                                parent.display()
+                            ),
+                        ));
+                    }
+                }
+
+                // Exact original-byte write from the in-memory read (no second source I/O).
+                if let Err(error) = fs::write(&destination, &bytes) {
+                    return IngestWorkerResult::Failed(CatalogError::new(
+                        "import_copy",
+                        format!(
+                            "Could not write {} to {}: {error}",
+                            source_absolute.display(),
+                            destination.display()
+                        ),
+                    ));
+                }
+
+                let file_name = Path::new(relative)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(relative)
+                    .to_string();
+
+                let thumbnail_relative_path = format!(
+                    "{}/{}/{}/{}",
+                    paths::PHOTART_DIR,
+                    paths::THUMBNAILS_DIR,
+                    ctx.shoot_name,
+                    thumb_name
+                );
+
+                IngestWorkerResult::Ready(PreparedItem {
+                    relative_path: relative.clone(),
+                    file_name,
+                    width: photograph.width,
+                    height: photograph.height,
+                    thumbnail_relative_path,
+                })
+            })
+            .collect();
+
+        for result in results {
+            match result {
+                IngestWorkerResult::Ready(item) => {
+                    prepared.push(item);
+                    progress(ImportProgress {
+                        phase: "preparing".into(),
+                        total: Some(total),
+                        prepared: Some(prepared.len() as u32),
+                    });
+                }
+                IngestWorkerResult::Skipped => {}
+                IngestWorkerResult::Failed(error) => return Err(error),
             }
         }
-
-        let source_absolute = source_path.join(Path::new(relative));
-        let bytes = match fs::read(&source_absolute) {
-            Ok(bytes) => bytes,
-            Err(_) => continue,
-        };
-
-        let photograph = match prepare_photograph(&bytes) {
-            Ok(photograph) => photograph,
-            Err(_) => continue,
-        };
-
-        let thumb_name = thumbnail_file_name(relative);
-        let thumb_staging_path = staging_thumbnails.join(&thumb_name);
-        fs::write(&thumb_staging_path, &photograph.thumbnail_jpeg).map_err(|error| {
-            CatalogError::new(
-                "thumbnail_write",
-                format!(
-                    "Could not write staged thumbnail at {}: {error}",
-                    thumb_staging_path.display()
-                ),
-            )
-        })?;
-
-        let file_name = Path::new(relative)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(relative)
-            .to_string();
-
-        let thumbnail_relative_path = format!(
-            "{}/{}/{}/{}",
-            paths::PHOTART_DIR,
-            paths::THUMBNAILS_DIR,
-            shoot_name,
-            thumb_name
-        );
-
-        prepared.push(PreparedItem {
-            relative_path: relative.clone(),
-            file_name,
-            width: photograph.width,
-            height: photograph.height,
-            thumbnail_relative_path,
-            source_absolute,
-        });
-
-        progress(ImportProgress {
-            phase: "preparing".into(),
-            copied: None,
-            total: Some(total),
-            prepared: Some((index + 1) as u32),
-        });
     }
 
     prepared.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     Ok(prepared)
-}
-
-fn copy_originals(
-    _source_path: &Path,
-    staging_shoot: &Path,
-    prepared: &[PreparedItem],
-    progress: &mut dyn FnMut(ImportProgress),
-    cancel: &AtomicBool,
-    faults: &ImportFaults,
-) -> Result<(), CatalogError> {
-    let total = prepared.len() as u32;
-    for (index, item) in prepared.iter().enumerate() {
-        check_cancel(cancel)?;
-
-        if let Some(limit) = faults.fail_after_copied {
-            if index as u32 >= limit {
-                return Err(CatalogError::new(
-                    "import_fault",
-                    "Injected failure during copy.",
-                ));
-            }
-        }
-
-        let destination = staging_shoot.join(Path::new(&item.relative_path));
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                CatalogError::new(
-                    "import_copy",
-                    format!(
-                        "Could not create destination folder at {}: {error}",
-                        parent.display()
-                    ),
-                )
-            })?;
-        }
-
-        // Exact original-byte copy.
-        fs::copy(&item.source_absolute, &destination).map_err(|error| {
-            CatalogError::new(
-                "import_copy",
-                format!(
-                    "Could not copy {} to {}: {error}",
-                    item.source_absolute.display(),
-                    destination.display()
-                ),
-            )
-        })?;
-
-        progress(ImportProgress {
-            phase: "copying".into(),
-            copied: Some((index + 1) as u32),
-            total: Some(total),
-            prepared: Some(total),
-        });
-    }
-    Ok(())
 }
 
 fn move_dir(from: &Path, to: &Path) -> std::io::Result<()> {

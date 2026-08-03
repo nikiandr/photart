@@ -258,7 +258,6 @@ function App() {
       shootName,
       progress: {
         phase: "scanning",
-        copied: null,
         total: null,
         prepared: null,
       },

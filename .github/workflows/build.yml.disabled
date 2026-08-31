@@ -1,5 +1,8 @@
 name: Build
 
+# DISABLED: GitHub Actions ignores this file because of the `.disabled` suffix.
+# Rename to `build.yml` to turn production bundling back on.
+#
 # Builds the Tauri desktop app for macOS, Windows, and Linux.
 #
 # - On pushes to `main`, pull requests, or manual runs, it compiles the app on

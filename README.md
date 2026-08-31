@@ -62,9 +62,11 @@ sudo apt install libwebkit2gtk-4.1-dev \
   rpm
 ```
 
-CI builds `.deb` and `.rpm` only (`bun run tauri build --bundles deb,rpm`). Bundles land in `src-tauri/target/release/bundle/deb/` and `src-tauri/target/release/bundle/rpm/`. The `.deb` already depends on WebKitGTK 4.1 at runtime.
+Linux packaging uses `.deb` and `.rpm` (`bun run tauri build --bundles deb,rpm`). Bundles land in `src-tauri/target/release/bundle/deb/` and `src-tauri/target/release/bundle/rpm/`. The `.deb` already depends on WebKitGTK 4.1 at runtime.
 
-A default `bun run tauri build` also tries an AppImage. That needs working FUSE/`linuxdeploy` on the host and is not part of CI; build it explicitly with `bun run tauri build --bundles appimage` if you want it.
+A default `bun run tauri build` also tries an AppImage. That needs working FUSE/`linuxdeploy` on the host; build it explicitly with `bun run tauri build --bundles appimage` if you want it.
+
+The GitHub Actions production Build workflow is currently disabled (`build.yml.disabled`). Rename it to `build.yml` to emit those installers in CI.
 
 ## Recommended IDE Setup
 

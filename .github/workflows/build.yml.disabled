@@ -1,6 +1,9 @@
 name: Build
 
-# Builds the Tauri desktop app for macOS and Windows.
+# DISABLED: GitHub Actions ignores this file because of the `.disabled` suffix.
+# Rename to `build.yml` to turn production bundling back on.
+#
+# Builds the Tauri desktop app for macOS, Windows, and Linux.
 #
 # - On pushes to `main`, pull requests, or manual runs, it compiles the app on
 #   each platform and uploads the installers/bundles as workflow artifacts so you
@@ -38,12 +41,36 @@ jobs:
             args: ''
             rust-targets: ''
             bundle-path: 'src-tauri/target/release/bundle'
+          # Ubuntu 22.04 is Tauri's recommended Linux baseline (WebKitGTK 4.1 + older glibc).
+          # AppImage is omitted: linuxdeploy/FUSE is unreliable on GitHub runners.
+          - platform: ubuntu-22.04
+            args: '--bundles deb,rpm'
+            rust-targets: ''
+            bundle-path: 'src-tauri/target/release/bundle'
 
     runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils \
+            rpm
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

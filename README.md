@@ -1,6 +1,7 @@
 # photart
 
 A local photo inspector built with Tauri, React, TypeScript, and Vite.
+It runs on macOS, Windows, and Linux.
 
 ## Development
 
@@ -33,6 +34,39 @@ To create a static Storybook build:
 ```sh
 bun run build-storybook
 ```
+
+## Building
+
+Production installers are produced with Tauri:
+
+```sh
+bun install
+bun run tauri build
+```
+
+On Linux, install the [Tauri v2 system dependencies](https://v2.tauri.app/start/prerequisites/#linux) first, plus Rust (via [rustup](https://rustup.rs/)) and [Bun](https://bun.sh/). On Debian/Ubuntu:
+
+```sh
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  patchelf \
+  xdg-utils \
+  rpm
+```
+
+Linux packaging uses `.deb` and `.rpm` (`bun run tauri build --bundles deb,rpm`). Bundles land in `src-tauri/target/release/bundle/deb/` and `src-tauri/target/release/bundle/rpm/`. The `.deb` already depends on WebKitGTK 4.1 at runtime.
+
+A default `bun run tauri build` also tries an AppImage. That needs working FUSE/`linuxdeploy` on the host; build it explicitly with `bun run tauri build --bundles appimage` if you want it.
+
+The GitHub Actions production Build workflow is currently disabled (`build.yml.disabled`). Rename it to `build.yml` to emit those installers in CI.
 
 ## Recommended IDE Setup
 

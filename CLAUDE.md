@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-photart is a Tauri 2 desktop app (macOS & Windows) for amateur photographers who want to make their photography workflow easier and faster. Frontend: React 19 + TypeScript + Vite. Backend: Rust. Package manager/runtime for JS: Bun.
+photart is a Tauri 2 desktop app (macOS, Windows, and Linux) for amateur photographers who want to make their photography workflow easier and faster. Frontend: React 19 + TypeScript + Vite. Backend: Rust. Package manager/runtime for JS: Bun.
 
 ## Commands
 
@@ -45,4 +45,4 @@ Configuration that matters:
 ## CI (.github/workflows)
 
 - `lint.yml` — every push/PR: `bun run build`, `cargo fmt --check`, `cargo clippy -D warnings`.
-- `build.yml` — builds macOS (universal) and Windows bundles as artifacts on every PR/push to main; pushing a `v*` tag creates a draft GitHub Release with installers.
+- `build.yml.disabled` — production bundling is off. Rename to `build.yml` to build macOS (universal), Windows, and Linux (`.deb`/`.rpm` on Ubuntu 22.04) as artifacts on PRs/pushes to main, and to create a draft GitHub Release on `v*` tags.

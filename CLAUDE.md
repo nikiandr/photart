@@ -10,7 +10,8 @@ photart is a Tauri 2 desktop app (macOS, Windows, and Linux) for amateur photogr
 
 ```bash
 bun install                  # install JS dependencies
-bun run tauri dev            # run the full desktop app (compiles Rust, starts Vite)
+bun run tauri dev            # Photart Dev: full desktop app (compiles Rust, starts Vite)
+bun run package:mac          # installable Photart.app and .dmg for this Mac
 bun run dev                  # frontend only, in a browser (no Tauri APIs)
 bun run build                # typecheck (tsc) + build frontend into dist/
 bun run tauri build          # production app bundle

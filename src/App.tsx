@@ -22,6 +22,7 @@ import {
   purgeShoot,
   renameShoot,
 } from "@/lib/catalog";
+import { editionName } from "@/lib/edition";
 import { pathBasename } from "@/lib/names";
 import type {
   CatalogError,
@@ -444,13 +445,15 @@ function App() {
     return (
       <div className="flex h-svh w-full items-center justify-center overflow-hidden bg-background">
         <div role="status" aria-live="polite" className="flex flex-col items-center gap-4">
-          <PhotartMark className="size-12" />
+          <PhotartMark className="size-12" title={editionName()} />
           <div className="flex flex-col items-center gap-3">
             <SpinnerGap
               className="size-5 animate-spin motion-reduce:animate-none text-muted-foreground"
               aria-hidden="true"
             />
-            <p className="font-sans text-sm text-muted-foreground">Opening Photart…</p>
+            <p className="font-sans text-sm text-muted-foreground">
+              Opening {editionName()}…
+            </p>
           </div>
         </div>
       </div>

@@ -16,7 +16,8 @@ The app is available at `http://localhost:1420` and Storybook at
 `http://localhost:6006`.
 
 To launch the Tauri desktop app in development mode (which also starts
-Storybook):
+Storybook). This build is named Photart Dev, so it can sit beside the
+installed Photart app:
 
 ```sh
 bun run tauri dev
@@ -37,12 +38,18 @@ bun run build-storybook
 
 ## Building
 
-Production installers are produced with Tauri:
+The installable app is named Photart. On a Mac:
 
 ```sh
 bun install
-bun run tauri build
+bun run package:mac
 ```
+
+That writes `Photart.app` and a `.dmg` under `src-tauri/target/release/bundle/`.
+Drag the app into Applications, or send the `.dmg`. The first build is
+ad-hoc signed, so another Mac needs a right-click → Open the first time.
+
+`bun run tauri build` produces the same Photart app for the current platform.
 
 On Linux, install the [Tauri v2 system dependencies](https://v2.tauri.app/start/prerequisites/#linux) first, plus Rust (via [rustup](https://rustup.rs/)) and [Bun](https://bun.sh/). On Debian/Ubuntu:
 

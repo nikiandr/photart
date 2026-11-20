@@ -54,14 +54,9 @@ The list runs highest to lowest priority: when two rules collide, the lower-numb
 
 ## Integrate with the project
 
-- Stack: Tauri 2 desktop, React 19 + TypeScript + Vite, Tailwind 4 (CSS-first config in `src/styles/globals.css`), shadcn `base-lyra` style on Base UI (see `components.json`), `@phosphor-icons/react`.
-- The system has two layers (see `docs/design/design-philosophy.md`): quiet primitives (the shadcn/Base UI chassis, not the identity) and photographic patterns (Photo Stage, Technical Check marker, Burst Comparison, Shoot entry, Thread workspace, Handoff). Invest in the patterns; they are what protect attention, momentum, and authorship.
-- Use primitives from `src/components/ui/`; extend them through cva variants. Never fork a primitive into a parallel component.
-- Import icons from `@phosphor-icons/react/dist/csr/<Icon>`, as in `src/App.tsx`.
-- Style only through CSS-variable tokens and the Tailwind utilities mapped in `@theme inline`. Never hardcode hex or oklch values in components; reference tokens by name.
-- Atmosphere is set by the `data-atmosphere` attribute (`"gallery"` or `"review"`) on `<html>` or a subtree root. The `dark:` variant applies automatically inside `review` through `@custom-variant`; never build a second dark scheme.
-- Ship every new component with a colocated `.stories.tsx`. Foundations stories live under `src/stories/foundations/` titled `Foundations/<Name>`.
-- bun is the JS runtime and package manager; `bun run build` (tsc) must pass. Do not add dependencies without asking.
+- The design system has two layers. Reuse quiet shared primitives and invest in photographic patterns such as the Photo Stage, Technical Check marker, Burst Comparison, Shoot entry, Thread workspace, and Handoff. These patterns protect attention, momentum, and authorship.
+- Extend the existing shared components and reference the named tokens in `src/styles/globals.css`. Use the existing atmosphere system for Gallery and Review.
+- Give each new component a Storybook story. Use the Typography and Atmospheres foundations as references.
 
 ## Work in four passes
 
@@ -78,8 +73,8 @@ For the full evaluation frame, see the nine Decision Tests in `docs/design/desig
 
 ### 2. Choose the composition
 
-- Stage first: the photograph sits on the `bg-stage` / `text-stage-foreground` surface, and the quiet frame surrounds it.
-- Compose with space and `border-t border-border` hairlines between sections, not cards. Precedent: `src/App.tsx`.
+- Place the photograph on the stage and let a quiet frame surround it.
+- Compose sections with space and hairline rules. Reserve cards for discrete objects.
 - Keep one focal point per screen. Align aggressively. Prefer square, barely-softened geometry.
 - Do not force photographs into identical containers; layouts holding photographs may respond to aspect ratio, sequence, and rhythm.
 - Practice informational and attentional minimalism, not merely visual minimalism: show what the photographer needs now, make deeper evidence available in place, then get out of the way.
@@ -95,46 +90,46 @@ Treat this section and `src/styles/globals.css` as the design authority. Do not 
 
 Two related atmospheres, one system:
 
-- Gallery: warm paper neutrals, contemporary, never cream or sepia; `color-scheme: light`.
-- Review: cool, deep, low-chroma neutrals with `color-scheme: dark`, so photographs stay the strongest color source.
+- Gallery uses light, warm paper neutrals with a contemporary feel. Avoid cream and sepia.
+- Review uses cool, deep, low-chroma neutrals so photographs stay the strongest color source.
 
 Rules:
 
-- Set `data-atmosphere` at the highest element that owns the moment (`index.html` defaults to `gallery`; `src/App.tsx` switches `<html>`).
+- Apply the atmosphere to the full surface that owns the moment.
 - Never blend atmospheres on one surface. One surface, one atmosphere.
 - Keep typography, interaction behavior, and component grammar identical across both, so the two environments remain unmistakably related rather than separate applications or modes.
 - The atmosphere follows the work along one continuous flow (Import Shoot, Technical Check, Review Shoot, Gallery, Handoff). It is an environment change, never a module switch.
-- In Storybook the toolbar switches via `withThemeByDataAttribute` (`.storybook/preview.tsx`). For dual checks, follow the `SideBySide` pattern in `src/stories/foundations/atmospheres.stories.tsx`.
+- Use Storybook to compare both atmospheres.
 
 #### Geometry, spacing, and alignment
 
-- Sharp and composed: radius is `0.125rem` (`rounded-md`) everywhere; every `--radius-*` step maps to that same token.
+- Keep geometry sharp and composed with a consistent, barely softened corner radius.
 - Use borders and hairline rules over shadows; use space over container proliferation.
-- Use the Tailwind default spacing scale as-is. Do not invent spacing tokens.
+- Use the existing spacing scale.
 - Do not use plush radii, pills, or soft floating panels.
-- Inside data sections, separate rows with `divide-y divide-border` instead of boxes (precedent: `MetadataSection` and `InfoRow` in `src/App.tsx`).
+- Inside data sections, use thin rules to separate rows.
 
 #### Typography and rhythm
 
 A frozen five-rung ladder. Add no other sizes without defining a new role first:
 
-- Editorial display: `font-editorial text-3xl font-medium tracking-tight` (Newsreader), for Shoot names, Gallery headings, and sparse reflective moments. Never on dense chrome.
-- Heading: `font-sans text-2xl font-semibold tracking-tight` (IBM Plex Sans).
-- Subheading: `font-sans text-lg font-medium`.
-- Body: `font-sans text-sm/relaxed`; supporting text takes `text-muted-foreground`.
-- Chrome and data: `text-[0.8125rem]`; `font-mono` (IBM Plex Mono) for EXIF, filenames, dimensions, counts, and shortcuts. Set only the datum in mono, never its sentence.
+- Use Newsreader for editorial display, including Shoot names, Gallery headings, and sparse reflective moments. Keep dense interface text in IBM Plex Sans.
+- Set headings in prominent IBM Plex Sans.
+- Set subheadings in smaller IBM Plex Sans.
+- Set body copy in IBM Plex Sans with comfortable line spacing and mute supporting text.
+- Use compact interface text and IBM Plex Mono for EXIF, filenames, dimensions, counts, and shortcuts. Keep surrounding sentences in sans.
 
-Pattern: definition lists with sans labels and mono values (`dt` in `font-sans text-muted-foreground`, `dd` in `font-mono text-[0.8125rem]`). See `Foundations/Typography`.
+In definition lists, use muted sans labels and mono values. See the Typography foundation in Storybook.
 
-The base layer already sets `font-sans text-sm`, so IBM Plex Sans is the default everywhere; Newsreader is a deliberate accent, never a decorative layer over dense interface text.
+IBM Plex Sans is the interface default. Use Newsreader as a deliberate editorial accent.
 
 #### Color, surfaces, and boundaries
 
 - Low-chroma neutrals only; no fixed meaning is ever tied to a specific hue.
-- `--destructive` is the only chromatic token and is reserved for irreversible consequences (Purge). Never spend it on warnings or emphasis.
-- Status stays quiet: the badge default is `bg-muted text-foreground`, and the destructive alert is a `border-l-2 border-l-destructive` leading rule, not a filled background.
-- Follow the marks in `Foundations/Atmospheres`: a Suggested Frame takes the default badge, All Good the outline badge, and bare data such as ISO values a mono badge.
-- Technical Check Levels (All Good, Minor Issues, Significant Issues) render as shape-plus-text marks: Phosphor `Check`, `Warning`, and `WarningDiamond` at muted intensity, always paired with the text label. Never traffic-light hues; never color alone. The levels describe the amount and significance of findings, never confidence or artistic quality.
+- Use color as an interface accent only for irreversible consequences such as Purge. Keep warnings and emphasis neutral.
+- Keep ordinary badges muted. Mark a destructive alert with a thin leading rule.
+- Use a muted badge for a Suggested Frame, an outlined badge for All Good, and a monospaced badge for bare values such as ISO. See the Atmospheres foundation in Storybook.
+- Pair each Technical Check Level (All Good, Minor Issues, Significant Issues) with a distinct muted symbol and its text label. Never use traffic-light hues or color alone. The levels describe the amount and significance of findings. Confidence and artistic quality are outside that scale.
 
 #### Data and findings
 
@@ -155,18 +150,18 @@ The base layer already sets `font-sans text-sm`, so IBM Plex Sans is the default
 
 > Motion preserves continuity, reveals causality, or assists inspection. If it does none of those, it does not move.
 
-- Budget 150–250ms, ease-out. Motion must never delay the next judgment or compete with the photograph.
+- Budget 150–250 ms. Motion must never delay the next judgment or compete with the photograph.
 - Permitted uses: connecting a thumbnail to focused inspection, preserving spatial understanding between related states, helping compare imagery.
 - Atmosphere switches are crossfade-only; the stage never layout-shifts.
-- Every transition pairs with a `motion-reduce:` variant; `motion-reduce:transition-none` is the baseline (see `src/components/ui/button.tsx`).
+- Honor reduced-motion preferences for every transition.
 
 #### Media and icons
 
 - The photograph is the only hero. No decorative imagery, illustrations, or stock assets, ever.
-- Phosphor icons, regular weight, 16px default, optically aligned with `text-[0.8125rem]` chrome.
+- Use the existing icon set and align icons visually with nearby text.
 - An icon must make the action materially faster to recognize; otherwise use a text label. Never use emoji as icons.
 - Interpret photography contemporarily: learn from framing, sequencing, contact-sheet rhythm, and negative space, but never imitate analog artifacts (film grain, retro camera chrome, darkroom skeuomorphism).
-- Render photographs at their own aspect ratio (`object-contain` on the stage, as in `src/App.tsx`); never force a crop for grid tidiness.
+- Render photographs at their own aspect ratio. Preserve the full frame in the grid and on the stage.
 
 ### 4. Voice
 
@@ -193,9 +188,9 @@ Before handoff, review internally; do not expose a critique report unless asked:
   7. Does motion explain a relationship or assist inspection?
   8. Does the system feel contemporary and photographic without imitation?
   9. Does this belong to the quiet frame, or is it competing with the work?
-- Render both atmospheres (the `SideBySide` pattern in `Foundations/Atmospheres`).
+- Render both atmospheres.
 - Walk the entire flow keyboard-only, and confirm every Review action shows its shortcut in mono.
-- Check `prefers-reduced-motion` behavior.
+- Check reduced-motion behavior.
 - Audit the vocabulary: every label, identifier, and story name uses `CONTEXT.md` terms.
 - Run the photograph dominance test: squint, and confirm the photograph is still the most present element.
 
@@ -217,33 +212,16 @@ Do not ship any of these recognizable defaults:
 
 Restraint is not merely dark gray and empty margins. Restraint is hierarchy, typography, alignment, and the photograph.
 
-## Use the published token and component API
+## Use existing tokens and components
 
-Use these exact names, and verify against `src/styles/globals.css` and `src/components/ui/` before reaching for anything else:
-
-- Font utilities: `font-sans`, `font-editorial`, `font-mono`.
-- Surface and text pairs: `bg-background` / `text-foreground`, `bg-card` / `text-card-foreground`, `bg-popover` / `text-popover-foreground`, `bg-primary` / `text-primary-foreground`, `bg-secondary` / `text-secondary-foreground`, `bg-muted` / `text-muted-foreground`, `bg-accent` / `text-accent-foreground`, `bg-stage` / `text-stage-foreground`.
-- Standalone color tokens: `bg-destructive` / `text-destructive` (no `-foreground` pair), `border-border`, `border-input`, `ring-ring`, and the `bg-chart-1` through `bg-chart-5` ramp.
-- Sidebar family: `bg-sidebar` / `text-sidebar-foreground`, `bg-sidebar-primary` / `text-sidebar-primary-foreground`, `bg-sidebar-accent` / `text-sidebar-accent-foreground`, `border-sidebar-border`, `ring-sidebar-ring`.
-- Atmosphere hook: `data-atmosphere="gallery"` or `data-atmosphere="review"`; the `dark:` variant inside Review.
-- Radius: `rounded-md` (every `rounded-*` step resolves to the same `0.125rem` token).
-- Primitives with their Photart defaults:
-  - `Button`: variants `default | outline | secondary | ghost | destructive | link`; sizes `default | xs | sm | lg | icon | icon-xs | icon-sm | icon-lg`; place icons with `data-icon="inline-start"` or `data-icon="inline-end"`.
-  - `Badge`: variants `default` (quiet: `bg-muted text-foreground`) `| secondary | destructive | outline | ghost | link`.
-  - `Card`: `size="sm"` (renders `data-size="sm"`) for compact spacing; compose `CardHeader`, `CardTitle`, `CardDescription`, `CardAction`, `CardContent`, `CardFooter`. A card is a discrete object, never a photo stage.
-  - `Alert`: variants `default | destructive`; destructive renders as a leading `border-l-2 border-l-destructive` rule. Compose `AlertTitle`, `AlertDescription`, `AlertAction`.
-  - `Separator`: hairline `bg-border`, horizontal by default.
-- Foundations stories: `Foundations/Typography` and `Foundations/Atmospheres`.
-- Already applied by the base layer in `globals.css`; do not redeclare: `border-border` and `outline-ring/50` on all elements, `font-sans text-sm antialiased` on `html`, `bg-background text-foreground` on `body`.
-
-If nothing fits, compose semantic HTML plus tokens. Never invent parallel class systems. Arbitrary values only for established sizes (`text-[0.8125rem]`).
+Use the existing token system and shared components. Look up token names in `src/styles/globals.css` and component options in `src/components/ui/`. If no shared component fits, compose semantic HTML with existing tokens. Keep new work within the same visual system.
 
 ## Accessibility and keyboard
 
 - Meet WCAG AA contrast in both atmospheres. Never rely on color alone; this is why Technical Check Levels are shape plus text.
 - Keep Technical Check Levels visibly distinguishable and clearly named in both atmospheres.
-- Keep focus visible through the ring token (the `focus-visible:ring-ring/50` pattern), keep semantic landmarks, and keep source order equal to reading order.
-- Respect `prefers-reduced-motion` wherever motion exists.
+- Keep keyboard focus visible, retain semantic landmarks, and keep source order aligned with reading order.
+- Respect reduced-motion preferences wherever motion exists.
 - Photart is a desktop windowed app: layouts must hold at the window's minimum size without horizontal scrolling. No mobile-breakpoint thinking.
 
 The target is studio-assistant judgment, not decoration. The photograph is the interface.

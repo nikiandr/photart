@@ -29,6 +29,7 @@ export function PhotartBrand({
       )}
     >
       <PhotartMark
+        appearance={stacked ? "icon" : "sidebar"}
         className={cn(stacked ? "size-10" : "size-8", markClassName)}
       />
       <div className={cn("min-w-0", stacked && "space-y-0.5")}>

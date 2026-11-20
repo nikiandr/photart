@@ -148,11 +148,12 @@
   }
 
   html {
-    @apply font-sans text-sm antialiased;
+    @apply font-sans antialiased;
+    font-size: 112.5%;
   }
 
   body {
-    @apply m-0 min-h-svh bg-background text-foreground;
+    @apply m-0 min-h-svh bg-background text-sm text-foreground;
   }
 
   #root {

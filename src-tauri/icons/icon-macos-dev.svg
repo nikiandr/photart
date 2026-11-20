@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="1024"
+  viewBox="-81 -81 812 812"
+  role="img"
+  aria-labelledby="title"
+>
+  <title id="title">Photart Dev macOS icon</title>
+
+  <path
+    fill="#202329"
+    d="M155 0H495C605 0 650 45 650 155V495C650 605 605 650 495 650H155C45 650 0 605 0 495V155C0 45 45 0 155 0Z"
+  />
+
+  <!-- The Released Frame mark matches icon-macos.svg. -->
+  <g fill="#5e6268">
+    <rect x="161" y="230" width="34" height="252" />
+    <rect x="161" y="230" width="194" height="34" />
+    <rect x="321" y="230" width="34" height="252" />
+    <rect x="161" y="448" width="194" height="34" />
+  </g>
+
+  <rect x="220" y="170" width="225" height="351" fill="#202329" />
+  <g fill="#8b8d8d">
+    <rect x="220" y="170" width="38" height="351" />
+    <rect x="220" y="170" width="225" height="38" />
+    <rect x="407" y="170" width="38" height="351" />
+    <rect x="220" y="483" width="225" height="38" />
+  </g>
+
+  <rect x="289" y="99" width="242" height="258" fill="#202329" />
+  <g fill="#f4f1ec">
+    <rect x="289" y="99" width="54" height="446" />
+    <rect x="289" y="99" width="242" height="54" />
+    <rect x="477" y="99" width="54" height="258" />
+    <rect x="289" y="303" width="242" height="54" />
+  </g>
+
+  <!-- Sits below the mark so the Dock icon reads as the dev app. -->
+  <rect x="163" y="562" width="324" height="68" rx="12" fill="#f4f1ec" />
+  <text
+    x="325"
+    y="610"
+    text-anchor="middle"
+    font-family="Menlo, ui-monospace, monospace"
+    font-size="44"
+    font-weight="700"
+    fill="#202329"
+    letter-spacing="3"
+  >DEV</text>
+</svg>

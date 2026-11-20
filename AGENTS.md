@@ -8,7 +8,8 @@ photart is a **Tauri 2** desktop app (React 19 + Vite frontend, Rust backend). J
 
 | Service | Command | URL / notes |
 |--------|---------|-------------|
-| Full desktop app | `bun run tauri dev` | Native window; also starts Vite + Storybook via `beforeDevCommand` |
+| Full desktop app | `bun run tauri dev` | Photart Dev. Native window; also starts Vite + Storybook via `beforeDevCommand` |
+| Installable Mac app | `bun run package:mac` | Photart.app and `.dmg` in `src-tauri/target/release/bundle/` |
 | Frontend only | `bun run dev:app` | http://localhost:1420 (port is **strict** — only one instance) |
 | Storybook | `bun run storybook` | http://localhost:6006 |
 | App + Storybook | `bun run dev` | Both of the above concurrently |

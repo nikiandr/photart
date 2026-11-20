@@ -37,3 +37,12 @@ export const StackedLockup: Story = {
     layout: "stack",
   },
 };
+
+export const DevSidebarLockup: Story = {
+  args: {
+    layout: "inline",
+    detail: "Photart Catalog",
+    dev: true,
+  },
+  decorators: SidebarLockup.decorators,
+};

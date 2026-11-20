@@ -1,10 +1,13 @@
 import { PhotartMark } from "@/components/brand/PhotartMark";
+import { editionName, isDevEdition } from "@/lib/edition";
 import { cn } from "@/lib/utils";
 
 export type PhotartBrandProps = {
   className?: string;
   /** Secondary line under the wordmark, e.g. the Catalog name. */
   detail?: string;
+  /** Storybook override. The running app reads the build channel. */
+  dev?: boolean;
   /** inline: mark beside wordmark (sidebar). stack: mark above wordmark (setup). */
   layout?: "inline" | "stack";
   markClassName?: string;
@@ -13,10 +16,12 @@ export type PhotartBrandProps = {
 export function PhotartBrand({
   className,
   detail,
+  dev,
   layout = "inline",
   markClassName,
 }: PhotartBrandProps) {
   const stacked = layout === "stack";
+  const showDev = dev ?? isDevEdition();
 
   return (
     <div
@@ -31,6 +36,7 @@ export function PhotartBrand({
       <PhotartMark
         appearance={stacked ? "icon" : "sidebar"}
         className={cn(stacked ? "size-10" : "size-8", markClassName)}
+        title={editionName(showDev)}
       />
       <div className={cn("min-w-0", stacked && "space-y-0.5")}>
         <p
@@ -40,6 +46,12 @@ export function PhotartBrand({
           )}
         >
           Photart
+          {showDev ? (
+            <span className="font-mono text-xs font-normal text-muted-foreground">
+              {" "}
+              Dev
+            </span>
+          ) : null}
         </p>
         {detail ? (
           <p className="truncate text-xs text-muted-foreground">{detail}</p>

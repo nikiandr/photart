@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime};
 
 const CONFIG_FILE_NAME: &str = "config.json";
-const DEVELOPMENT_CONFIG_FILE_NAME: &str = "photart.config.json";
+const DEVELOPMENT_CONFIG_FILE_NAME: &str = "dev.config.json";
+const LEGACY_DEVELOPMENT_CONFIG_FILE_NAME: &str = "photart.config.json";
 const CURRENT_SCHEMA_VERSION: u32 = 2;
 const LEGACY_SCHEMA_VERSION: u32 = 1;
 
@@ -117,27 +118,40 @@ impl AppConfigStore {
 }
 
 pub fn config_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, AppConfigError> {
-    if cfg!(debug_assertions) {
-        let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .ok_or_else(|| {
-                AppConfigError::new(
-                    "config_path",
-                    "The development project root could not be resolved.",
-                )
-            })?;
-        Ok(project_root.join(DEVELOPMENT_CONFIG_FILE_NAME))
+    // Debug and release stay in the OS config directory so a new git worktree does
+    // not forget the Catalog. Debug uses its own file and never writes the release one.
+    let file_name = if cfg!(debug_assertions) {
+        DEVELOPMENT_CONFIG_FILE_NAME
     } else {
-        app.path()
-            .app_config_dir()
-            .map(|directory| directory.join(CONFIG_FILE_NAME))
-            .map_err(|error| {
-                AppConfigError::new(
-                    "config_path",
-                    format!("The operating system config directory could not be resolved: {error}"),
-                )
-            })
+        CONFIG_FILE_NAME
+    };
+
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(file_name))
+        .map_err(|error| {
+            AppConfigError::new(
+                "config_path",
+                format!("The operating system config directory could not be resolved: {error}"),
+            )
+        })
+}
+
+/// Checkout-local pointer written by older debug builds. Gitignored, so each worktree had its own.
+pub fn legacy_worktree_config_path() -> Option<PathBuf> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|project_root| project_root.join(LEGACY_DEVELOPMENT_CONFIG_FILE_NAME))
+}
+
+pub fn catalog_pointer_from_config_file(path: &Path) -> Option<CatalogPointer> {
+    if !path.is_file() {
+        return None;
     }
+
+    read_config(path)
+        .ok()
+        .and_then(|(config, _)| config.catalog)
 }
 
 fn migrate_from_v1(legacy: LegacyAppConfigV1) -> Result<AppConfig, AppConfigError> {

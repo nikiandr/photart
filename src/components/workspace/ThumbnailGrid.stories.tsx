@@ -32,6 +32,8 @@ const mixedAspectPhotographs: PhotographEntry[] = [
   photo("landscape-02.jpg", 1800, 900, "#b5a89a"),
   photo("portrait-02.jpg", 800, 1200, "#8fa0b0"),
   photo("square-02.jpg", 1000, 1000, "#b0a898"),
+  photo("panorama-01.jpg", 3200, 1000, "#a0afb5"),
+  photo("portrait-03-with-a-long-camera-filename.jpg", 800, 1200, "#ad9e9a"),
 ];
 
 const meta = {

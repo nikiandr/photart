@@ -57,7 +57,9 @@ fn validate_container(mut bytes: &[u8]) -> Result<(), ImageProcessingError> {
                 return Err(ImageProcessingError::DecodeError);
             }
             let still_brands = brands
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .enumerate()
                 .filter_map(|(index, brand)| (index != 1).then_some(brand));
             if !matches!(&brands[..4], b"heic" | b"heix" | b"mif1")

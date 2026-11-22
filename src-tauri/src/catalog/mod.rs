@@ -584,6 +584,65 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "uses the real camera files in samples/raw"]
+    fn raw_samples_import_and_render_details() {
+        let originals = Path::new(env!("CARGO_MANIFEST_DIR")).join("../samples/raw");
+        let files = [
+            ("Apple-iPhone-6s-Plus.DNG", "Apple", false, 2560),
+            ("Canon-EOS-R50.CR3", "Canon", false, 2560),
+            ("Fujifilm-X-T3.RAF", "Fujifilm", false, 2560),
+            ("Nikon-Z6.NEF", "Nikon", false, 2560),
+            ("Ricoh-GXR-S10-portrait.DNG", "Ricoh", true, 2560),
+            ("Sony-a6400.ARW", "Sony", false, 2560),
+        ];
+        let (_parent, _config_dir, catalog, _store) = create_ready_catalog("Raw Samples");
+        let result = import_shoot(
+            &catalog,
+            &originals,
+            "Shoot",
+            None,
+            |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(result.skipped_file_count, 0);
+        let shoot = get_shoot(&catalog, "Shoot").unwrap();
+        assert_eq!(shoot.photographs.len(), files.len());
+        let detail_dir = paths::shoot_thumbnails_dir(&catalog, "Shoot").join(paths::DETAIL_DIR);
+        assert!(!detail_dir.exists());
+        for (photo, (name, make, portrait, detail_size)) in shoot.photographs.iter().zip(files) {
+            assert_eq!(photo.relative_path, name);
+            assert!(photo.uses_detail_cache);
+            assert!(photo.display_absolute_path.is_none());
+            let original = photo.original_absolute_path.as_ref().unwrap();
+            assert_eq!(
+                std::fs::read(original).unwrap(),
+                std::fs::read(originals.join(name)).unwrap()
+            );
+            let capture = serde_json::to_value(
+                crate::image_processing::load_capture_details(original).unwrap(),
+            )
+            .unwrap();
+            assert!(
+                capture["camera"].as_str().unwrap().starts_with(make),
+                "{name}"
+            );
+            for field in ["lens", "capturedAt", "iso", "aperture", "shutterSpeed"] {
+                assert!(!capture[field].is_null(), "{name}: {field}");
+            }
+            let detail = get_photograph_detail(&catalog, "Shoot", name).unwrap();
+            for (path, size) in [
+                (&photo.thumbnail_absolute_path, 640),
+                (&detail, detail_size),
+            ] {
+                let image = image::open(path).unwrap();
+                assert_eq!(image.height() > image.width(), portrait, "{name}");
+                assert_eq!(image.height().max(image.width()), size, "{name}");
+            }
+        }
+    }
+
+    #[test]
     fn heic_and_tiff_details_are_cached_only_on_demand() {
         use std::fs::{self, File, FileTimes};
         use std::io::Cursor;

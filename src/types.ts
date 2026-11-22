@@ -20,6 +20,16 @@ export type PhotographEntry = {
   thumbnailAbsolutePath: string;
   /** Authorized asset URL for the cached thumbnail. */
   thumbnailUrl: string;
+  originalUrl: string | null;
+};
+
+export type PhotographCapture = {
+  camera: string | null;
+  lens: string | null;
+  capturedAt: string | null;
+  aperture: string | null;
+  shutterSpeed: string | null;
+  iso: number | null;
 };
 
 export type CatalogSnapshot = {

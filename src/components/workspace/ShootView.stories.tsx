@@ -22,6 +22,7 @@ function photo(
     thumbnailRelativePath: `thumbnails/${fileName}`,
     thumbnailAbsolutePath: `/tmp/${fileName}`,
     thumbnailUrl: placeholderUrl(width, height, color),
+    originalUrl: placeholderUrl(width, height, color),
   };
 }
 
@@ -57,6 +58,18 @@ const meta = {
     shoot: sampleShoot,
     skippedNoticeCount: null,
     loading: false,
+    loadCapture: async (_shootName, relativePath) => {
+      const photograph = sampleShoot.photographs.find((photo) => photo.relativePath === relativePath);
+      if (!photograph) throw new Error("Photograph is unavailable.");
+      return {
+        camera: "Canon EOS R6",
+        lens: "RF 50mm F1.8 STM",
+        capturedAt: "2026-08-01 07:35:00",
+        aperture: "f/2.8",
+        shutterSpeed: "1/250 s",
+        iso: photograph.width > photograph.height ? 200 : 800,
+      };
+    },
   },
 } satisfies Meta<typeof ShootView>;
 
@@ -64,6 +77,12 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
+
+export const PhotographDetail: Story = {
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByRole("button", { name: "IMG_0101.jpg" }));
+  },
+};
 
 export const WithSkippedNotice: Story = {
   args: {

@@ -22,6 +22,7 @@ function photo(
     thumbnailRelativePath: `thumbnails/${fileName}`,
     thumbnailAbsolutePath: `/tmp/${fileName}`,
     thumbnailUrl: placeholderUrl(width, height, color),
+    originalUrl: null,
   };
 }
 
@@ -39,6 +40,9 @@ const mixedAspectPhotographs: PhotographEntry[] = [
 const meta = {
   title: "Workspace/ThumbnailGrid",
   component: ThumbnailGrid,
+  args: {
+    onOpenPhotograph: () => {},
+  },
   parameters: {
     layout: "padded",
   },

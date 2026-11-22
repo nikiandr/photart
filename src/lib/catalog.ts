@@ -8,6 +8,8 @@ import type {
   ImportProgress,
   ImportShootInput,
   ImportShootResult,
+  PhotographCapture,
+  PhotographEntry,
   ShootDetails,
 } from "@/types";
 
@@ -35,12 +37,19 @@ function normalizeError(error: unknown): CatalogError {
   };
 }
 
-function withThumbnailUrls(shoot: ShootDetails): ShootDetails {
+type RawShootDetails = Omit<ShootDetails, "photographs"> & {
+  photographs: (Omit<PhotographEntry, "thumbnailUrl" | "originalUrl"> & {
+    originalAbsolutePath: string | null;
+  })[];
+};
+
+function withAssetUrls(shoot: RawShootDetails): ShootDetails {
   return {
     ...shoot,
-    photographs: shoot.photographs.map((photograph) => ({
+    photographs: shoot.photographs.map(({ originalAbsolutePath, ...photograph }) => ({
       ...photograph,
       thumbnailUrl: convertFileSrc(photograph.thumbnailAbsolutePath),
+      originalUrl: originalAbsolutePath === null ? null : convertFileSrc(originalAbsolutePath),
     })),
   };
 }
@@ -68,11 +77,18 @@ export async function createCatalog(
 
 export async function loadShoot(name: string): Promise<ShootDetails> {
   try {
-    const shoot = await invoke<ShootDetails>("get_shoot", { shootName: name });
-    return withThumbnailUrls(shoot);
+    const shoot = await invoke<RawShootDetails>("get_shoot", { shootName: name });
+    return withAssetUrls(shoot);
   } catch (error) {
     throw normalizeError(error);
   }
+}
+
+export function loadPhotographCapture(
+  shootName: string,
+  relativePath: string,
+): Promise<PhotographCapture> {
+  return invoke("get_photograph_capture", { shootName, relativePath });
 }
 
 export async function renameShoot(
@@ -80,11 +96,11 @@ export async function renameShoot(
   newName: string,
 ): Promise<ShootDetails> {
   try {
-    const shoot = await invoke<ShootDetails>("rename_shoot", {
+    const shoot = await invoke<RawShootDetails>("rename_shoot", {
       shootName,
       newName,
     });
-    return withThumbnailUrls(shoot);
+    return withAssetUrls(shoot);
   } catch (error) {
     throw normalizeError(error);
   }
@@ -118,7 +134,7 @@ export function importShoot(
 
   const result = (async () => {
     try {
-      const imported = await invoke<ImportShootResult>("import_shoot", {
+      const imported = await invoke<Omit<ImportShootResult, "shoot"> & { shoot: RawShootDetails }>("import_shoot", {
         importId,
         sourcePath: input.sourcePath,
         shootName: input.shootName,
@@ -126,7 +142,7 @@ export function importShoot(
       });
       return {
         ...imported,
-        shoot: withThumbnailUrls(imported.shoot),
+        shoot: withAssetUrls(imported.shoot),
       };
     } catch (error) {
       throw normalizeError(error);

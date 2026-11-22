@@ -13,7 +13,7 @@ use super::manifest::{self, PhotographRecord, ShootRecord};
 use super::names::validate_single_path_component_name;
 use super::paths::{self, normalize_relative_path, thumbnail_file_name};
 use super::state::shoot_details_from_record;
-use super::{ImportProgress, ImportShootResult};
+use super::{ImportProgress, ImportShootResult, ShootMedium};
 
 static IMPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -129,6 +129,7 @@ pub fn import_shoot(
     catalog_path: &Path,
     source_path: &Path,
     shoot_name: &str,
+    medium: Option<ShootMedium>,
     mut progress: impl FnMut(ImportProgress),
     cancel: &AtomicBool,
 ) -> Result<ImportShootResult, CatalogError> {
@@ -136,6 +137,7 @@ pub fn import_shoot(
         catalog_path,
         source_path,
         shoot_name,
+        medium,
         &mut progress,
         cancel,
         &ImportFaults::default(),
@@ -146,6 +148,7 @@ pub(crate) fn import_shoot_inner(
     catalog_path: &Path,
     source_path: &Path,
     shoot_name: &str,
+    medium: Option<ShootMedium>,
     progress: &mut dyn FnMut(ImportProgress),
     cancel: &AtomicBool,
     faults: &ImportFaults,
@@ -358,6 +361,7 @@ pub(crate) fn import_shoot_inner(
             imported_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
             photograph_count: photographs.len() as u32,
             skipped_file_count: scan.skipped_file_count + prepared_skip_count(&scan, &prepared),
+            medium: medium.map(ShootMedium::normalized),
             photographs,
         };
 
@@ -444,12 +448,15 @@ impl RollbackState {
     }
 }
 
-struct ScanResult {
-    candidates: Vec<String>,
+pub(super) struct ScanResult {
+    pub(super) candidates: Vec<String>,
     skipped_file_count: u32,
 }
 
-fn scan_source(source_path: &Path, cancel: &AtomicBool) -> Result<ScanResult, CatalogError> {
+pub(super) fn scan_source(
+    source_path: &Path,
+    cancel: &AtomicBool,
+) -> Result<ScanResult, CatalogError> {
     let mut candidates = Vec::new();
     let mut skipped_file_count = 0u32;
     walk_source(

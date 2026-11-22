@@ -162,6 +162,7 @@ pub(crate) fn shoot_summary_from_record(shoot: &ShootRecord) -> ShootSummary {
         imported_at: shoot.imported_at.clone(),
         photograph_count: shoot.photograph_count,
         skipped_file_count: shoot.skipped_file_count,
+        medium: shoot.medium.clone(),
     }
 }
 

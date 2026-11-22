@@ -25,6 +25,8 @@ pub struct ShootRecord {
     pub imported_at: String,
     pub photograph_count: u32,
     pub skipped_file_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium: Option<super::ShootMedium>,
     pub photographs: Vec<PhotographRecord>,
 }
 
@@ -325,6 +327,7 @@ mod tests {
             imported_at: "2024-01-01T00:00:00Z".into(),
             photograph_count: 0,
             skipped_file_count: 0,
+            medium: None,
             photographs: vec![],
         });
         let error = write_manifest(&catalog, &manifest).unwrap_err();
@@ -341,6 +344,7 @@ mod tests {
             imported_at: "2024-01-01T00:00:00Z".into(),
             photograph_count: 0,
             skipped_file_count: 0,
+            medium: None,
             photographs: vec![],
         });
         manifest.shoots.push(ShootRecord {
@@ -349,6 +353,7 @@ mod tests {
             imported_at: "2024-01-02T00:00:00Z".into(),
             photograph_count: 0,
             skipped_file_count: 0,
+            medium: None,
             photographs: vec![],
         });
         manifest.shoots.push(ShootRecord {
@@ -357,6 +362,7 @@ mod tests {
             imported_at: "2024-01-02T00:00:00Z".into(),
             photograph_count: 0,
             skipped_file_count: 0,
+            medium: None,
             photographs: vec![],
         });
 

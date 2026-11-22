@@ -29,7 +29,7 @@ The creation of catalog-owned copies of every photograph in a source before Revi
 _Avoid_: Open, scan, sync
 
 **Shoot**:
-A named group of photographs imported together and represented by a folder inside the catalog. Importing a source creates one Shoot.
+A named group of photographs imported together and represented by a folder inside the catalog. Importing a Source creates one Shoot. A Shoot can be identified as film or digital; a film Shoot can optionally record its film stock.
 _Avoid_: Session, project, collection, batch
 
 **Burst**:

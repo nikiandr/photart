@@ -11,6 +11,7 @@ const sampleShoots: ShootSummary[] = [
     importedAt: "2026-08-01T10:00:00Z",
     photographCount: 128,
     skippedFileCount: 2,
+    medium: null,
   },
   {
     name: "Harbor Walk",
@@ -18,6 +19,7 @@ const sampleShoots: ShootSummary[] = [
     importedAt: "2026-08-01T14:00:00Z",
     photographCount: 54,
     skippedFileCount: 0,
+    medium: null,
   },
   {
     name: "Very Long Shoot Name That Should Truncate Nicely",
@@ -25,6 +27,7 @@ const sampleShoots: ShootSummary[] = [
     importedAt: "2026-08-01T18:00:00Z",
     photographCount: 9,
     skippedFileCount: 0,
+    medium: null,
   },
 ];
 
@@ -49,7 +52,7 @@ export const EmptyCatalog: Story = {
         onHome={() => undefined}
         onCreateShoot={() => undefined}
         onSelectShoot={() => undefined}
-        onRenameShoot={async () => undefined}
+        onUpdateShoot={async () => undefined}
         onPurgeShoot={async () => undefined}
       />
     ),
@@ -71,7 +74,7 @@ export const Populated: Story = {
         onHome={() => undefined}
         onCreateShoot={() => undefined}
         onSelectShoot={() => undefined}
-        onRenameShoot={async () => undefined}
+        onUpdateShoot={async () => undefined}
         onPurgeShoot={async () => undefined}
       />
     ),
@@ -94,7 +97,7 @@ export const ImportDisabled: Story = {
         onHome={() => undefined}
         onCreateShoot={() => undefined}
         onSelectShoot={() => undefined}
-        onRenameShoot={async () => undefined}
+        onUpdateShoot={async () => undefined}
         onPurgeShoot={async () => undefined}
       />
     ),

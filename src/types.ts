@@ -20,7 +20,9 @@ export type PhotographEntry = {
   thumbnailAbsolutePath: string;
   /** Authorized asset URL for the cached thumbnail. */
   thumbnailUrl: string;
-  originalUrl: string | null;
+  originalAvailable: boolean;
+  displayUrl: string | null;
+  usesDetailCache: boolean;
 };
 
 export type PhotographCapture = {

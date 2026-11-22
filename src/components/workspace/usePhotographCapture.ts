@@ -9,7 +9,7 @@ export function usePhotographCapture(
   loadCapture: typeof loadPhotographCapture,
   shootName: string,
   relativePath: string,
-  originalUrl: string | null,
+  originalAvailable: boolean,
 ) {
   const cache = useRef(new Map<string, PhotographCapture>());
   const [result, setResult] = useState<{
@@ -21,7 +21,7 @@ export function usePhotographCapture(
     let cancelled = false;
     const captures = cache.current;
 
-    if (originalUrl !== null) {
+    if (originalAvailable) {
       const cached = captures.get(relativePath);
       if (cached) {
         captures.delete(relativePath);
@@ -46,7 +46,7 @@ export function usePhotographCapture(
     return () => {
       cancelled = true;
     };
-  }, [loadCapture, shootName, relativePath, originalUrl]);
+  }, [loadCapture, shootName, relativePath, originalAvailable]);
 
-  return originalUrl !== null && result?.path === relativePath ? result.capture : undefined;
+  return originalAvailable && result?.path === relativePath ? result.capture : undefined;
 }

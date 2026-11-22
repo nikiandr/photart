@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::detail::lock_detail_cache;
 use super::error::CatalogError;
 use super::manifest::{self, ShootRecord};
 use super::names::validate_single_path_component_name;
@@ -16,6 +17,7 @@ pub fn rename_shoot(
     shoot_name: &str,
     new_name: &str,
 ) -> Result<ShootDetails, CatalogError> {
+    let _cache = lock_detail_cache()?;
     let new_name = validate_single_path_component_name(new_name)?;
     let mut manifest = manifest::read_manifest(catalog_path)?;
     let shoot_index = find_shoot_index(&manifest.shoots, shoot_name)?;
@@ -110,6 +112,7 @@ pub fn rename_shoot(
 }
 
 pub fn purge_shoot(catalog_path: &Path, shoot_name: &str) -> Result<(), CatalogError> {
+    let _cache = lock_detail_cache()?;
     let mut manifest = manifest::read_manifest(catalog_path)?;
     let shoot_index = find_shoot_index(&manifest.shoots, shoot_name)?;
     let shoot = manifest.shoots[shoot_index].clone();
@@ -198,19 +201,17 @@ fn renamed_record(shoot: &ShootRecord, new_name: &str) -> Result<ShootRecord, Ca
     renamed.relative_path = new_name.to_string();
 
     for photograph in &mut renamed.photographs {
-        let suffix = photograph
-            .thumbnail_relative_path
-            .strip_prefix(&old_prefix)
-            .ok_or_else(|| {
-                CatalogError::new(
-                    "shoot_rename",
-                    format!(
-                        "Thumbnail path does not belong to Shoot \"{}\": {}",
-                        shoot.name, photograph.thumbnail_relative_path
-                    ),
-                )
-            })?;
-        photograph.thumbnail_relative_path = format!("{new_prefix}{suffix}");
+        let path = &mut photograph.thumbnail_relative_path;
+        let suffix = path.strip_prefix(&old_prefix).ok_or_else(|| {
+            CatalogError::new(
+                "shoot_rename",
+                format!(
+                    "Cached image path does not belong to Shoot \"{}\": {path}",
+                    shoot.name
+                ),
+            )
+        })?;
+        *path = format!("{new_prefix}{suffix}");
     }
 
     Ok(renamed)

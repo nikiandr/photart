@@ -5,6 +5,7 @@ use super::error::CatalogError;
 pub const PHOTART_DIR: &str = ".photart";
 pub const MANIFEST_FILE: &str = "catalog.json";
 pub const THUMBNAILS_DIR: &str = "thumbnails";
+pub const DETAIL_DIR: &str = "detail";
 pub const IMPORTS_DIR: &str = "imports";
 
 pub fn photart_dir(catalog_path: &Path) -> PathBuf {

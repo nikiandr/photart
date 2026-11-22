@@ -1,32 +1,45 @@
 use std::fs::File;
-use std::io::{self, BufReader, Cursor};
+use std::io::{self, BufReader, Cursor, Read};
 use std::path::Path;
+use std::sync::Mutex;
 
 use exif::{Exif, In, Reader, Tag, Value};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat, ImageReader};
 use serde::Serialize;
 
+mod heic;
+mod tiff;
+
 pub const MAX_THUMBNAIL_DIMENSION: u32 = 640;
 pub const THUMBNAIL_JPEG_QUALITY: u8 = 82;
+const MAX_DETAIL_DIMENSION: u32 = 2560;
+const DETAIL_JPEG_QUALITY: u8 = 90;
 const MAX_FILE_SIZE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_MEGAPIXELS: u64 = 100_000_000;
+static DERIVATIVE_DECODE: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SupportedFormat {
-    Jpeg,
-    Png,
-    WebP,
+enum SupportedFormat {
+    Raster(ImageFormat),
+    Heic,
+    Tiff,
 }
 
 impl SupportedFormat {
-    pub fn from_image_format(format: ImageFormat) -> Option<Self> {
-        match format {
-            ImageFormat::Jpeg => Some(Self::Jpeg),
-            ImageFormat::Png => Some(Self::Png),
-            ImageFormat::WebP => Some(Self::WebP),
+    fn from_path(path: &Path) -> Option<Self> {
+        match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" => Some(Self::Raster(ImageFormat::Jpeg)),
+            "png" => Some(Self::Raster(ImageFormat::Png)),
+            "webp" => Some(Self::Raster(ImageFormat::WebP)),
+            "heic" | "heif" => Some(Self::Heic),
+            "tif" | "tiff" => Some(Self::Tiff),
             _ => None,
         }
+    }
+
+    fn needs_detail_jpeg(self) -> bool {
+        matches!(self, Self::Heic | Self::Tiff)
     }
 }
 
@@ -34,7 +47,6 @@ impl SupportedFormat {
 pub struct PreparedPhotograph {
     pub width: u32,
     pub height: u32,
-    pub format: SupportedFormat,
     pub thumbnail_jpeg: Vec<u8>,
 }
 
@@ -58,51 +70,99 @@ pub enum ImageProcessingError {
 }
 
 pub fn is_supported_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "jpg" | "jpeg" | "png" | "webp"
-            )
-        })
-        .unwrap_or(false)
+    SupportedFormat::from_path(path).is_some()
 }
 
-pub fn prepare_photograph(bytes: &[u8]) -> Result<PreparedPhotograph, ImageProcessingError> {
+pub(crate) fn uses_detail_cache(path: &Path) -> bool {
+    SupportedFormat::from_path(path).is_some_and(SupportedFormat::needs_detail_jpeg)
+}
+
+pub(crate) fn read_source(path: &Path) -> io::Result<Vec<u8>> {
+    let file = File::open(path)?;
+    if file.metadata()?.len() > MAX_FILE_SIZE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Source exceeds 100 MiB",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_SIZE_BYTES + 1).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+pub fn prepare_photograph(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<PreparedPhotograph, ImageProcessingError> {
+    let (_decode_slot, image) = decode_oriented(path, bytes)?;
+    Ok(PreparedPhotograph {
+        width: image.width(),
+        height: image.height(),
+        thumbnail_jpeg: render_jpeg(&image, MAX_THUMBNAIL_DIMENSION, THUMBNAIL_JPEG_QUALITY)?,
+    })
+}
+
+pub(crate) fn prepare_detail_jpeg(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<Vec<u8>, ImageProcessingError> {
+    if !uses_detail_cache(path) {
+        return Err(ImageProcessingError::UnsupportedFormat);
+    }
+    let (_decode_slot, image) = decode_oriented(path, bytes)?;
+    render_jpeg(&image, MAX_DETAIL_DIMENSION, DETAIL_JPEG_QUALITY)
+}
+
+fn decode_oriented(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(Option<std::sync::MutexGuard<'static, ()>>, DynamicImage), ImageProcessingError> {
     if bytes.len() as u64 > MAX_FILE_SIZE_BYTES {
         return Err(ImageProcessingError::TooLarge);
     }
 
-    let format = image::guess_format(bytes).map_err(|_| ImageProcessingError::UnsupportedFormat)?;
-    let supported = SupportedFormat::from_image_format(format)
-        .ok_or(ImageProcessingError::UnsupportedFormat)?;
-
-    let (raw_width, raw_height) = {
-        let mut reader = ImageReader::new(Cursor::new(bytes));
-        reader.set_format(format);
-        reader
-            .into_dimensions()
-            .map_err(|_| ImageProcessingError::DecodeError)?
+    let format = SupportedFormat::from_path(path).ok_or(ImageProcessingError::UnsupportedFormat)?;
+    let decode_slot = format.needs_detail_jpeg().then(|| {
+        DERIVATIVE_DECODE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    });
+    let oriented = match format {
+        SupportedFormat::Heic => heic::decode(bytes)?,
+        SupportedFormat::Tiff => {
+            let orientation = tiff::inspect(bytes)?;
+            apply_orientation(decode_raster(bytes, ImageFormat::Tiff)?, orientation)
+        }
+        SupportedFormat::Raster(raster) => {
+            apply_orientation(decode_raster(bytes, raster)?, read_orientation(bytes))
+        }
     };
 
-    let pixel_count = u64::from(raw_width) * u64::from(raw_height);
-    if pixel_count > MAX_MEGAPIXELS {
-        return Err(ImageProcessingError::TooLarge);
+    Ok((decode_slot, oriented))
+}
+
+fn check_dimensions(width: u32, height: u32) -> Result<(), ImageProcessingError> {
+    if width == 0 || height == 0 {
+        Err(ImageProcessingError::DecodeError)
+    } else if u64::from(width) * u64::from(height) > MAX_MEGAPIXELS {
+        Err(ImageProcessingError::TooLarge)
+    } else {
+        Ok(())
     }
+}
 
-    let image = image::load_from_memory_with_format(bytes, format)
+fn decode_raster(bytes: &[u8], format: ImageFormat) -> Result<DynamicImage, ImageProcessingError> {
+    if format != ImageFormat::Tiff && image::guess_format(bytes).ok() != Some(format) {
+        return Err(ImageProcessingError::UnsupportedFormat);
+    }
+    let reader = || ImageReader::with_format(Cursor::new(bytes), format);
+    let (width, height) = reader()
+        .into_dimensions()
         .map_err(|_| ImageProcessingError::DecodeError)?;
-    let orientation = read_orientation(bytes);
-    let (width, height) = oriented_dimensions(image.width(), image.height(), orientation);
-    let oriented = apply_orientation(image, orientation);
-    let thumbnail_jpeg = generate_thumbnail_jpeg(&oriented)?;
-
-    Ok(PreparedPhotograph {
-        width,
-        height,
-        format: supported,
-        thumbnail_jpeg,
+    check_dimensions(width, height)?;
+    reader().decode().map_err(|error| match error {
+        image::ImageError::Limits(_) => ImageProcessingError::TooLarge,
+        _ => ImageProcessingError::DecodeError,
     })
 }
 
@@ -117,7 +177,11 @@ fn read_orientation(bytes: &[u8]) -> u32 {
 }
 
 pub(crate) fn load_capture_details(path: &Path) -> io::Result<CaptureDetails> {
-    let mut original = BufReader::new(File::open(path)?);
+    let file = File::open(path)?;
+    if file.metadata()?.len() > MAX_FILE_SIZE_BYTES {
+        return Ok(CaptureDetails::default());
+    }
+    let mut original = BufReader::new(file);
     Ok(Reader::new()
         .read_from_container(&mut original)
         .ok()
@@ -174,14 +238,6 @@ fn read_capture_details(exif: &Exif) -> CaptureDetails {
     }
 }
 
-pub fn oriented_dimensions(width: u32, height: u32, orientation: u32) -> (u32, u32) {
-    if (5..=8).contains(&orientation) {
-        (height, width)
-    } else {
-        (width, height)
-    }
-}
-
 pub fn apply_orientation(image: DynamicImage, orientation: u32) -> DynamicImage {
     match orientation {
         2 => image.fliph(),
@@ -195,16 +251,18 @@ pub fn apply_orientation(image: DynamicImage, orientation: u32) -> DynamicImage 
     }
 }
 
-fn generate_thumbnail_jpeg(image: &DynamicImage) -> Result<Vec<u8>, ImageProcessingError> {
-    let preview = if image.width().max(image.height()) > MAX_THUMBNAIL_DIMENSION {
-        image.thumbnail(MAX_THUMBNAIL_DIMENSION, MAX_THUMBNAIL_DIMENSION)
+fn render_jpeg(
+    image: &DynamicImage,
+    max_dimension: u32,
+    quality: u8,
+) -> Result<Vec<u8>, ImageProcessingError> {
+    let rgb = if image.width().max(image.height()) > max_dimension {
+        image.thumbnail(max_dimension, max_dimension).into_rgb8()
     } else {
-        image.clone()
+        image.to_rgb8()
     };
-
-    let rgb = preview.to_rgb8();
     let mut buffer = Cursor::new(Vec::new());
-    let mut encoder = JpegEncoder::new_with_quality(&mut buffer, THUMBNAIL_JPEG_QUALITY);
+    let mut encoder = JpegEncoder::new_with_quality(&mut buffer, quality);
     encoder
         .encode(
             rgb.as_raw(),
@@ -281,37 +339,178 @@ mod tests {
     }
 
     #[test]
-    fn oriented_dimensions_swaps_only_for_quarter_turns() {
-        for orientation in [1, 2, 3, 4] {
-            assert_eq!(oriented_dimensions(4032, 3024, orientation), (4032, 3024));
-        }
-        for orientation in [5, 6, 7, 8] {
-            assert_eq!(oriented_dimensions(3024, 4032, orientation), (4032, 3024));
-        }
-    }
-
-    #[test]
     fn supported_extension_is_case_insensitive() {
-        assert!(is_supported_extension(Path::new("IMG_0001.JPG")));
-        assert!(is_supported_extension(Path::new("shot.WebP")));
-        assert!(!is_supported_extension(Path::new("notes.txt")));
+        for extension in ["JPG", "JpEg", "PnG", "WebP", "HEIC", "HeiF", "TIF", "TiFf"] {
+            assert!(is_supported_extension(Path::new(&format!(
+                "photo.{extension}"
+            ))));
+        }
+        for extension in ["dng", "arw", "avif", "gif", "bmp", "jxl", "txt"] {
+            assert!(!is_supported_extension(Path::new(&format!(
+                "photo.{extension}"
+            ))));
+        }
     }
 
     #[test]
-    fn prepare_photograph_reads_png_dimensions_and_thumbnail() {
-        let mut bytes = Cursor::new(Vec::new());
-        image::RgbImage::from_pixel(4, 6, image::Rgb([10, 20, 30]))
-            .write_to(&mut bytes, ImageFormat::Png)
-            .expect("fixture png should encode");
+    fn jpeg_png_and_webp_still_prepare_without_detail_derivatives() {
+        for (name, format) in [
+            ("one.jpg", ImageFormat::Jpeg),
+            ("two.png", ImageFormat::Png),
+            ("three.webp", ImageFormat::WebP),
+        ] {
+            let mut bytes = Cursor::new(Vec::new());
+            sample().into_rgb8().write_to(&mut bytes, format).unwrap();
+            let prepared = prepare_photograph(Path::new(name), bytes.get_ref()).unwrap();
+            assert_eq!((prepared.width, prepared.height), (2, 3));
+            assert_eq!(jpeg_dimensions(&prepared.thumbnail_jpeg), (2, 3));
+            assert!(!uses_detail_cache(Path::new(name)));
+            assert_eq!(
+                prepare_photograph(Path::new("renamed.heic"), bytes.get_ref()),
+                Err(ImageProcessingError::UnsupportedFormat)
+            );
+            assert_eq!(
+                prepare_photograph(Path::new("renamed.tiff"), bytes.get_ref()),
+                Err(ImageProcessingError::UnsupportedFormat)
+            );
+        }
+    }
 
-        let prepared = prepare_photograph(&bytes.into_inner()).expect("png should prepare");
-        assert_eq!(prepared.width, 4);
-        assert_eq!(prepared.height, 6);
-        assert_eq!(prepared.format, SupportedFormat::Png);
-        assert!(!prepared.thumbnail_jpeg.is_empty());
+    fn jpeg_dimensions(bytes: &[u8]) -> (u32, u32) {
+        assert_eq!(image::guess_format(bytes).unwrap(), ImageFormat::Jpeg);
+        let decoded = image::load_from_memory(bytes).unwrap();
+        (decoded.width(), decoded.height())
+    }
+
+    #[test]
+    fn heic_applies_item_orientation_once_and_accepts_compatible_heif() {
+        let bytes = include_bytes!("../tests/fixtures/rotated.heic");
+        let mut generic = bytes.to_vec();
+        generic[8..12].copy_from_slice(b"mif1");
+        for (name, bytes) in [
+            ("rotated.HEIC", bytes.as_slice()),
+            ("generic.HEIF", generic.as_slice()),
+        ] {
+            let photo = prepare_photograph(Path::new(name), bytes).unwrap();
+            assert_eq!((photo.width, photo.height), (48, 64));
+            assert_eq!(jpeg_dimensions(&photo.thumbnail_jpeg), (48, 64));
+            assert_eq!(
+                jpeg_dimensions(&prepare_detail_jpeg(Path::new(name), bytes).unwrap()),
+                (48, 64)
+            );
+        }
+        generic[8..12].copy_from_slice(b"avif");
         assert_eq!(
-            image::guess_format(&prepared.thumbnail_jpeg).ok(),
-            Some(ImageFormat::Jpeg)
+            prepare_photograph(Path::new("wrong.heif"), &generic),
+            Err(ImageProcessingError::UnsupportedFormat)
         );
+        assert_eq!(
+            prepare_photograph(Path::new("truncated.heic"), &bytes[..bytes.len() - 1]),
+            Err(ImageProcessingError::DecodeError)
+        );
+    }
+
+    #[test]
+    fn tiff_renders_first_page_with_orientation_and_bounded_derivatives() {
+        use ::tiff::{
+            encoder::{colortype, TiffEncoder},
+            tags::Tag,
+        };
+
+        let mut data = Cursor::new(Vec::new());
+        let mut encoder = TiffEncoder::new(&mut data).unwrap();
+        let mut first = encoder.new_image::<colortype::RGB16>(2700, 1350).unwrap();
+        first.encoder().write_tag(Tag::Orientation, 6_u16).unwrap();
+        first.write_data(&vec![20000; 2700 * 1350 * 3]).unwrap();
+        encoder.write_image::<colortype::Gray8>(1, 1, &[5]).unwrap();
+        let photo = prepare_photograph(Path::new("photo.TIF"), data.get_ref()).unwrap();
+        assert_eq!((photo.width, photo.height), (1350, 2700));
+        assert_eq!(jpeg_dimensions(&photo.thumbnail_jpeg), (320, 640));
+        assert_eq!(
+            jpeg_dimensions(&prepare_detail_jpeg(Path::new("photo.TIF"), data.get_ref()).unwrap()),
+            (1280, 2560)
+        );
+    }
+
+    #[test]
+    fn tiff_rejects_a_renderable_raw_preview_even_with_a_tiff_extension() {
+        use ::tiff::{
+            encoder::{colortype, TiffEncoder},
+            tags::Tag,
+        };
+
+        for tag in [Tag::Unknown(50706), Tag::Unknown(33422)] {
+            for raw_in_first_page in [true, false] {
+                let mut bytes = Cursor::new(Vec::new());
+                let mut encoder = TiffEncoder::new(&mut bytes).unwrap();
+                if !raw_in_first_page {
+                    encoder.write_image::<colortype::Gray8>(1, 1, &[5]).unwrap();
+                }
+                let mut image = encoder.new_image::<colortype::Gray8>(1, 1).unwrap();
+                image
+                    .encoder()
+                    .write_tag(tag, &[1_u8, 4, 0, 0][..])
+                    .unwrap();
+                image.write_data(&[5]).unwrap();
+                assert_eq!(
+                    prepare_photograph(Path::new("renamed.tiff"), bytes.get_ref()),
+                    Err(ImageProcessingError::UnsupportedFormat)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tiff_rejects_excessive_dimensions_before_pixel_decode() {
+        use ::tiff::{
+            encoder::{colortype, TiffEncoder},
+            tags::Tag,
+        };
+
+        let mut bytes = Cursor::new(Vec::new());
+        let mut encoder = TiffEncoder::new(&mut bytes).unwrap();
+        let mut image = encoder.new_image::<colortype::Gray8>(2, 3).unwrap();
+        image
+            .encoder()
+            .write_tag(Tag::ImageWidth, 60_000_000_u32)
+            .unwrap();
+        image.write_data(&[5; 6]).unwrap();
+        assert_eq!(
+            prepare_photograph(Path::new("large.tif"), bytes.get_ref()),
+            Err(ImageProcessingError::TooLarge)
+        );
+    }
+
+    #[test]
+    fn bigtiff_support_does_not_bypass_subifd_raw_checks() {
+        use ::tiff::{
+            encoder::{colortype, Ifd8, TiffEncoder},
+            tags::Tag,
+        };
+
+        for raw in [false, true] {
+            let mut bytes = Cursor::new(Vec::new());
+            let mut encoder = TiffEncoder::new_big(&mut bytes).unwrap();
+            let mut subifd = encoder.extra_directory().unwrap();
+            subifd
+                .write_tag(
+                    Tag::PhotometricInterpretation,
+                    if raw { 32803_u16 } else { 1 },
+                )
+                .unwrap();
+            let offsets = subifd.finish_with_offsets().unwrap();
+            let mut first = encoder.new_image::<colortype::Gray8>(1, 1).unwrap();
+            first
+                .encoder()
+                .write_tag(Tag::SubIfd, Ifd8(offsets.pointer.0))
+                .unwrap();
+            first.write_data(&[5]).unwrap();
+            let prepared = prepare_photograph(Path::new("big.tiff"), bytes.get_ref());
+            if raw {
+                assert_eq!(prepared, Err(ImageProcessingError::UnsupportedFormat));
+            } else {
+                assert_eq!(jpeg_dimensions(&prepared.unwrap().thumbnail_jpeg), (1, 1));
+            }
+        }
     }
 }

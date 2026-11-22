@@ -615,12 +615,12 @@ fn ingest_candidates(
                 }
 
                 let source_absolute = ctx.source_path.join(Path::new(relative));
-                let bytes = match fs::read(&source_absolute) {
+                let bytes = match image_processing::read_source(&source_absolute) {
                     Ok(bytes) => bytes,
                     Err(_) => return IngestWorkerResult::Skipped,
                 };
 
-                let photograph = match prepare_photograph(&bytes) {
+                let photograph = match prepare_photograph(&source_absolute, &bytes) {
                     Ok(photograph) => photograph,
                     Err(_) => return IngestWorkerResult::Skipped,
                 };

@@ -3,6 +3,21 @@
 A local photo inspector built with Tauri, React, TypeScript, and Vite.
 It runs on macOS, Windows, and Linux.
 
+## Photo import
+
+Photart imports JPEG, PNG, WebP, HEIC, and TIFF (`.tif` or `.tiff`). `.heif`
+works when it contains a supported HEVC still image. Extensions are case
+insensitive and must match the file contents. Unsupported, unreadable, and
+oversize files are skipped. Camera RAW, including DNG, is not supported.
+
+Photart copies originals byte-for-byte. Gallery thumbnails are JPEGs up to
+640 pixels on the long edge. Detail view uses the original for JPEG, PNG, and
+WebP. For HEIC and TIFF it generates and caches a JPEG up to 2,560 pixels
+on first opening the photograph in Detail. Those detail images are display
+copies, not full-resolution, color-managed, HDR, or
+transparent renderings. Capture details are read from the original when
+available. See [format limits and decoder choices](docs/photo-import.md).
+
 ## Development
 
 Install dependencies and start the Vite app and Storybook together:

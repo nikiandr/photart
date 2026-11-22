@@ -22,7 +22,9 @@ function photo(
     thumbnailRelativePath: `thumbnails/${fileName}`,
     thumbnailAbsolutePath: `/tmp/${fileName}`,
     thumbnailUrl: placeholderUrl(width, height, color),
-    originalUrl: null,
+    originalAvailable: false,
+    displayUrl: null,
+    usesDetailCache: false,
   };
 }
 

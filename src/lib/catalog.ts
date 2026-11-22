@@ -38,18 +38,20 @@ function normalizeError(error: unknown): CatalogError {
 }
 
 type RawShootDetails = Omit<ShootDetails, "photographs"> & {
-  photographs: (Omit<PhotographEntry, "thumbnailUrl" | "originalUrl"> & {
+  photographs: (Omit<PhotographEntry, "thumbnailUrl" | "originalAvailable" | "displayUrl"> & {
     originalAbsolutePath: string | null;
+    displayAbsolutePath: string | null;
   })[];
 };
 
 function withAssetUrls(shoot: RawShootDetails): ShootDetails {
   return {
     ...shoot,
-    photographs: shoot.photographs.map(({ originalAbsolutePath, ...photograph }) => ({
+    photographs: shoot.photographs.map(({ originalAbsolutePath, displayAbsolutePath, ...photograph }) => ({
       ...photograph,
       thumbnailUrl: convertFileSrc(photograph.thumbnailAbsolutePath),
-      originalUrl: originalAbsolutePath === null ? null : convertFileSrc(originalAbsolutePath),
+      originalAvailable: originalAbsolutePath !== null,
+      displayUrl: displayAbsolutePath === null ? null : convertFileSrc(displayAbsolutePath),
     })),
   };
 }
@@ -89,6 +91,11 @@ export function loadPhotographCapture(
   relativePath: string,
 ): Promise<PhotographCapture> {
   return invoke("get_photograph_capture", { shootName, relativePath });
+}
+
+export async function loadPhotographDetail(shootName: string, relativePath: string): Promise<string> {
+  const path = await invoke<string>("get_photograph_detail", { shootName, relativePath });
+  return convertFileSrc(path);
 }
 
 export async function renameShoot(

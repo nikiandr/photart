@@ -87,7 +87,7 @@ pub fn get_shoot(catalog_path: &Path, shoot_name: &str) -> Result<ShootDetails, 
     shoot_details_from_record(catalog_path, find_shoot(&manifest, shoot_name)?)
 }
 
-fn find_shoot<'a>(
+pub(super) fn find_shoot<'a>(
     manifest: &'a manifest::CatalogManifest,
     shoot_name: &str,
 ) -> Result<&'a ShootRecord, CatalogError> {
@@ -144,7 +144,7 @@ pub(crate) fn get_photograph_capture(
     })
 }
 
-fn original_path(
+pub(super) fn original_path(
     catalog_path: &Path,
     shoot_path: &Path,
     photo: &PhotographRecord,
@@ -190,6 +190,11 @@ fn photograph_entry_from_record(
 ) -> Result<PhotographEntry, CatalogError> {
     let absolute = manifest::absolute_thumbnail_path(catalog_path, &photo.thumbnail_relative_path);
     let thumbnail_absolute_path = paths::authorize_catalog_path(catalog_path, &absolute)?;
+    let original_absolute_path = original_path(catalog_path, shoot_path, photo);
+    let uses_detail_cache = image_processing::uses_detail_cache(Path::new(&photo.relative_path));
+    let display_absolute_path = original_absolute_path
+        .clone()
+        .filter(|_| !uses_detail_cache);
 
     Ok(PhotographEntry {
         relative_path: photo.relative_path.clone(),
@@ -198,6 +203,8 @@ fn photograph_entry_from_record(
         height: photo.height,
         thumbnail_relative_path: photo.thumbnail_relative_path.clone(),
         thumbnail_absolute_path,
-        original_absolute_path: original_path(catalog_path, shoot_path, photo),
+        original_absolute_path,
+        display_absolute_path,
+        uses_detail_cache,
     })
 }

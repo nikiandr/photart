@@ -2,6 +2,7 @@
 
 mod actions;
 mod create;
+mod detail;
 mod discover;
 mod error;
 mod import;
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 pub use actions::{purge_shoot, rename_shoot};
 #[allow(unused_imports)] // re-exported for Tauri commands
 pub use create::create_catalog;
+pub(crate) use detail::get_photograph_detail;
 #[allow(unused_imports)]
 pub use discover::resolve_dev_catalog_seed;
 #[allow(unused_imports)]
@@ -83,6 +85,8 @@ pub struct PhotographEntry {
     pub thumbnail_relative_path: String,
     pub thumbnail_absolute_path: PathBuf,
     pub original_absolute_path: Option<PathBuf>,
+    pub display_absolute_path: Option<PathBuf>,
+    pub uses_detail_cache: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -455,6 +459,7 @@ mod tests {
             Some(paths::canonicalize_existing(&original).unwrap()),
         );
         assert_eq!(std::fs::read(&original).unwrap(), jpeg);
+        assert_eq!(photo.display_absolute_path, photo.original_absolute_path);
         let capture =
             get_photograph_capture(&catalog_path, "Detail Catalog", "Shoot", "day1/frame.jpg")
                 .unwrap();
@@ -476,6 +481,117 @@ mod tests {
             let shoot = get_shoot(&catalog_path, "Shoot").unwrap();
             assert!(shoot.photographs[0].original_absolute_path.is_none());
         }
+    }
+
+    #[test]
+    fn heic_and_tiff_details_are_cached_only_on_demand() {
+        use std::fs::{self, File, FileTimes};
+        use std::io::Cursor;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let (_parent, _config_dir, catalog_path, _store) = create_ready_catalog("New Formats");
+        let source = TestDirectory::new("new-formats");
+        let heic = include_bytes!("../../tests/fixtures/rotated.heic");
+        let mut tiff = Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(6, 4, image::Rgb([10, 20, 30]))
+            .write_to(&mut tiff, image::ImageFormat::Tiff)
+            .unwrap();
+        let originals = [
+            ("phone.HEIC", heic.as_slice()),
+            ("scan.TIFF", tiff.get_ref().as_slice()),
+        ];
+        for (name, bytes) in originals {
+            std::fs::write(source.path().join(name), bytes).unwrap();
+        }
+        std::fs::write(source.path().join("raw.dng"), tiff.get_ref()).unwrap();
+        std::fs::write(source.path().join("not-tiff.tif"), heic).unwrap();
+        std::fs::File::create(source.path().join("oversized.heic"))
+            .unwrap()
+            .set_len(100 * 1024 * 1024 + 1)
+            .unwrap();
+
+        let result = import_shoot(
+            &catalog_path,
+            source.path(),
+            "Shoot",
+            |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(result.skipped_file_count, 3);
+        let shoot = get_shoot(&catalog_path, "Shoot").unwrap();
+        assert_eq!(shoot.photographs.len(), originals.len());
+        let detail_dir =
+            paths::shoot_thumbnails_dir(&catalog_path, "Shoot").join(paths::DETAIL_DIR);
+        assert!(!detail_dir.exists());
+        for (photo, (name, bytes)) in shoot.photographs.iter().zip(originals) {
+            assert_eq!(photo.relative_path, name);
+            let original = photo.original_absolute_path.as_ref().unwrap();
+            assert_eq!(fs::read(original).unwrap(), bytes);
+            assert!(photo.uses_detail_cache);
+            assert!(photo.display_absolute_path.is_none());
+            let detail = get_photograph_detail(&catalog_path, "Shoot", name).unwrap();
+            assert_ne!(&detail, original);
+            assert_ne!(detail, photo.thumbnail_absolute_path);
+            for path in [&detail, &photo.thumbnail_absolute_path] {
+                assert_eq!(
+                    image::guess_format(&std::fs::read(path).unwrap()).unwrap(),
+                    image::ImageFormat::Jpeg
+                );
+                let image = image::open(path).unwrap();
+                assert_eq!((image.width(), image.height()), (photo.width, photo.height));
+            }
+        }
+        let original = shoot.photographs[0]
+            .original_absolute_path
+            .as_ref()
+            .unwrap();
+        let phone = get_photograph_detail(&catalog_path, "Shoot", "phone.HEIC").unwrap();
+        let expected = fs::read(&phone).unwrap();
+        let source_time = UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+        let cache_time = source_time + Duration::from_secs(10);
+        File::options()
+            .write(true)
+            .open(original)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(source_time))
+            .unwrap();
+        File::options()
+            .write(true)
+            .open(&phone)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(cache_time))
+            .unwrap();
+
+        rename_shoot(&catalog_path, "Shoot", "Renamed").unwrap();
+        let moved = get_photograph_detail(&catalog_path, "Renamed", "phone.HEIC").unwrap();
+        assert!(!phone.exists());
+        assert_eq!(
+            fs::metadata(&moved).unwrap().modified().unwrap(),
+            cache_time
+        );
+        File::options()
+            .write(true)
+            .open(&moved)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(source_time - Duration::from_secs(10)))
+            .unwrap();
+        get_photograph_detail(&catalog_path, "Renamed", "phone.HEIC").unwrap();
+        assert!(fs::metadata(&moved).unwrap().modified().unwrap() >= source_time);
+        fs::write(&moved, b"not a jpeg").unwrap();
+        get_photograph_detail(&catalog_path, "Renamed", "phone.HEIC").unwrap();
+        assert_eq!(fs::read(&moved).unwrap(), expected);
+        fs::remove_file(&moved).unwrap();
+        let reopened = get_shoot(&catalog_path, "Renamed").unwrap();
+        assert!(!moved.exists());
+        assert!(reopened.photographs[0].thumbnail_absolute_path.is_file());
+        get_photograph_detail(&catalog_path, "Renamed", "phone.HEIC").unwrap();
+        assert_eq!(fs::read(&moved).unwrap(), expected);
+        let capture =
+            get_photograph_capture(&catalog_path, "New Formats", "Renamed", "phone.HEIC").unwrap();
+        assert_eq!(serde_json::to_value(capture).unwrap()["camera"], "Photart");
+        purge_shoot(&catalog_path, "Renamed").unwrap();
+        assert!(!moved.exists());
     }
 
     #[test]

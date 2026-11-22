@@ -1,5 +1,5 @@
 import { Tooltip } from "@base-ui/react/tooltip";
-import { useCallback, useState } from "react";
+import { memo, useCallback, useState } from "react";
 
 import type { PhotographEntry } from "@/types";
 
@@ -7,6 +7,7 @@ const targetRowHeight = 120;
 
 export type ThumbnailGridProps = {
   photographs: PhotographEntry[];
+  onOpenPhotograph: (relativePath: string) => void;
 };
 
 function layoutRows(photographs: PhotographEntry[], width: number, gap: number) {
@@ -50,7 +51,10 @@ function layoutRows(photographs: PhotographEntry[], width: number, gap: number) 
   return rows;
 }
 
-export function ThumbnailGrid({ photographs }: ThumbnailGridProps) {
+export const ThumbnailGrid = memo(function ThumbnailGrid({
+  photographs,
+  onOpenPhotograph,
+}: ThumbnailGridProps) {
   const [size, setSize] = useState({ width: 0, gap: 0 });
   const [filenameTooltip] = useState(() => Tooltip.createHandle<string>());
 
@@ -98,17 +102,23 @@ export function ThumbnailGrid({ photographs }: ThumbnailGridProps) {
                   handle={filenameTooltip}
                   payload={photograph.fileName}
                   render={
-                    <img
-                      src={photograph.thumbnailUrl}
-                      alt={photograph.fileName}
-                      width={photograph.width}
-                      height={photograph.height}
-                      loading="lazy"
-                      decoding="async"
-                      tabIndex={0}
-                    />
+                    <button
+                      type="button"
+                      data-photograph-path={photograph.relativePath}
+                      onClick={() => onOpenPhotograph(photograph.relativePath)}
+                    >
+                      <img
+                        src={photograph.thumbnailUrl}
+                        alt={photograph.fileName}
+                        width={photograph.width}
+                        height={photograph.height}
+                        loading="lazy"
+                        decoding="async"
+                        className="size-full object-contain"
+                      />
+                    </button>
                   }
-                  className="size-full bg-muted object-contain focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  className="block size-full cursor-pointer bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 />
               </div>
             ))}
@@ -131,4 +141,4 @@ export function ThumbnailGrid({ photographs }: ThumbnailGridProps) {
       </Tooltip.Root>
     </>
   );
-}
+});

@@ -654,6 +654,7 @@ function App() {
 
       {view.kind === "shoot" ? (
         <ShootView
+          key={view.shoot.summary.relativePath}
           shoot={view.shoot}
           skippedNoticeCount={view.skippedNoticeCount}
           loading={view.loading}

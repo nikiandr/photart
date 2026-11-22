@@ -59,6 +59,34 @@ fn get_shoot(app: AppHandle, shoot_name: String) -> Result<ShootDetails, Catalog
 }
 
 #[tauri::command]
+async fn get_photograph_capture(
+    app: AppHandle,
+    shoot_name: String,
+    relative_path: String,
+) -> Result<image_processing::CaptureDetails, CatalogError> {
+    let config = require_config_store(&app)?
+        .get()
+        .map_err(config_error_to_catalog)?;
+    let catalog = config.catalog.ok_or_else(|| {
+        CatalogError::new(
+            "catalog_setup_required",
+            "Create a Catalog before continuing.",
+        )
+    })?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        catalog::get_photograph_capture(&catalog.path, &catalog.name, &shoot_name, &relative_path)
+    })
+    .await
+    .map_err(|error| {
+        CatalogError::new(
+            "photograph_capture_join",
+            format!("Capture details could not be read: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
 async fn rename_shoot(
     app: AppHandle,
     shoot_name: String,
@@ -243,6 +271,7 @@ pub fn run() {
             get_catalog_state,
             create_catalog,
             get_shoot,
+            get_photograph_capture,
             rename_shoot,
             purge_shoot,
             import_shoot,

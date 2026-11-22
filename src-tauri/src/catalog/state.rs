@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::app_config::AppConfig;
+use crate::image_processing::{self, CaptureDetails};
 
 use super::error::CatalogError;
 use super::manifest::{self, PhotographRecord, ShootRecord};
@@ -83,7 +84,14 @@ pub fn get_catalog_state(
 
 pub fn get_shoot(catalog_path: &Path, shoot_name: &str) -> Result<ShootDetails, CatalogError> {
     let manifest = manifest::read_manifest(catalog_path)?;
-    let shoot = manifest
+    shoot_details_from_record(catalog_path, find_shoot(&manifest, shoot_name)?)
+}
+
+fn find_shoot<'a>(
+    manifest: &'a manifest::CatalogManifest,
+    shoot_name: &str,
+) -> Result<&'a ShootRecord, CatalogError> {
+    manifest
         .shoots
         .iter()
         .find(|shoot| shoot.name == shoot_name)
@@ -92,9 +100,59 @@ pub fn get_shoot(catalog_path: &Path, shoot_name: &str) -> Result<ShootDetails, 
                 "shoot_not_found",
                 format!("Shoot \"{shoot_name}\" was not found in the Catalog."),
             )
-        })?;
+        })
+}
 
-    shoot_details_from_record(catalog_path, shoot)
+pub(crate) fn get_photograph_capture(
+    catalog_path: &Path,
+    catalog_name: &str,
+    shoot_name: &str,
+    relative_path: &str,
+) -> Result<CaptureDetails, CatalogError> {
+    let manifest = manifest::read_manifest(catalog_path)?;
+    if manifest.name != catalog_name {
+        return Err(CatalogError::new(
+            "catalog_unavailable",
+            "The Catalog name has changed.",
+        ));
+    }
+
+    let shoot = find_shoot(&manifest, shoot_name)?;
+    let photograph = shoot
+        .photographs
+        .iter()
+        .find(|photograph| photograph.relative_path == relative_path)
+        .ok_or_else(|| {
+            CatalogError::new(
+                "photograph_not_found",
+                "This photograph is no longer in the Shoot.",
+            )
+        })?;
+    let shoot_path = catalog_path.join(paths::validate_relative_path(&shoot.relative_path)?);
+    let original = original_path(catalog_path, &shoot_path, photograph).ok_or_else(|| {
+        CatalogError::new(
+            "photograph_unavailable",
+            "The original photograph is unavailable.",
+        )
+    })?;
+
+    image_processing::load_capture_details(&original).map_err(|_| {
+        CatalogError::new(
+            "photograph_capture",
+            "Could not read this photograph’s capture details.",
+        )
+    })
+}
+
+fn original_path(
+    catalog_path: &Path,
+    shoot_path: &Path,
+    photo: &PhotographRecord,
+) -> Option<PathBuf> {
+    let path = shoot_path.join(paths::validate_relative_path(&photo.relative_path).ok()?);
+    paths::authorize_catalog_path(catalog_path, &path)
+        .ok()
+        .filter(|path| path.is_file())
 }
 
 pub(crate) fn shoot_summary_from_record(shoot: &ShootRecord) -> ShootSummary {
@@ -111,10 +169,11 @@ pub(crate) fn shoot_details_from_record(
     catalog_path: &Path,
     shoot: &ShootRecord,
 ) -> Result<ShootDetails, CatalogError> {
+    let shoot_path = catalog_path.join(paths::validate_relative_path(&shoot.relative_path)?);
     let mut photographs: Vec<PhotographEntry> = shoot
         .photographs
         .iter()
-        .map(|photo| photograph_entry_from_record(catalog_path, photo))
+        .map(|photo| photograph_entry_from_record(catalog_path, &shoot_path, photo))
         .collect::<Result<Vec<_>, _>>()?;
     photographs.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
@@ -126,6 +185,7 @@ pub(crate) fn shoot_details_from_record(
 
 fn photograph_entry_from_record(
     catalog_path: &Path,
+    shoot_path: &Path,
     photo: &PhotographRecord,
 ) -> Result<PhotographEntry, CatalogError> {
     let absolute = manifest::absolute_thumbnail_path(catalog_path, &photo.thumbnail_relative_path);
@@ -138,5 +198,6 @@ fn photograph_entry_from_record(
         height: photo.height,
         thumbnail_relative_path: photo.thumbnail_relative_path.clone(),
         thumbnail_absolute_path,
+        original_absolute_path: original_path(catalog_path, shoot_path, photo),
     })
 }

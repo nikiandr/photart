@@ -27,6 +27,7 @@ pub use import::{import_shoot, ImportCoordinator, ImportPermit};
 pub use names::validate_single_path_component_name;
 #[allow(unused_imports)]
 pub use paths::{authorize_catalog_path, is_path_inside_catalog};
+pub(crate) use state::get_photograph_capture;
 #[allow(unused_imports)]
 pub use state::{get_catalog_state, get_shoot};
 
@@ -81,6 +82,7 @@ pub struct PhotographEntry {
     pub height: u32,
     pub thumbnail_relative_path: String,
     pub thumbnail_absolute_path: PathBuf,
+    pub original_absolute_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -399,6 +401,81 @@ mod tests {
             std::fs::read(source.path().join("day1/a.png")).unwrap(),
             original_a
         );
+    }
+
+    #[test]
+    fn photograph_original_is_authorized_and_its_capture_details_are_read_separately() {
+        use exif::{experimental::Writer, Field, In, Tag, Value};
+        use image::{codecs::jpeg::JpegEncoder, ImageEncoder};
+
+        let (_parent, _config_dir, catalog_path, _store) = create_ready_catalog("Detail Catalog");
+        let source = TestDirectory::new("detail-source");
+        let fields = [
+            (Tag::Orientation, Value::Short(vec![6])),
+            (Tag::Model, Value::Ascii(vec![b"Test Camera".to_vec()])),
+            (Tag::PhotographicSensitivity, Value::Short(vec![400])),
+        ];
+        let fields = fields.map(|(tag, value)| Field {
+            tag,
+            ifd_num: In::PRIMARY,
+            value,
+        });
+        let mut writer = Writer::new();
+        for field in &fields {
+            writer.push_field(field);
+        }
+        let mut exif = Cursor::new(Vec::new());
+        writer.write(&mut exif, false).unwrap();
+        let mut jpeg = Vec::new();
+        let mut encoder = JpegEncoder::new(&mut jpeg);
+        encoder.set_exif_metadata(exif.into_inner()).unwrap();
+        let pixels = RgbImage::from_pixel(8, 4, Rgb([10, 20, 30]));
+        encoder
+            .encode(pixels.as_raw(), 8, 4, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        std::fs::create_dir(source.path().join("day1")).unwrap();
+        let source_file = source.path().join("day1/frame.jpg");
+        std::fs::write(&source_file, &jpeg).unwrap();
+
+        import_shoot(
+            &catalog_path,
+            source.path(),
+            "Shoot",
+            |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        std::fs::remove_file(source_file).unwrap();
+        let shoot = get_shoot(&catalog_path, "Shoot").unwrap();
+        let photo = &shoot.photographs[0];
+        let original = catalog_path.join("Shoot/day1/frame.jpg");
+        assert_eq!((photo.width, photo.height), (4, 8));
+        assert_eq!(
+            photo.original_absolute_path,
+            Some(paths::canonicalize_existing(&original).unwrap()),
+        );
+        assert_eq!(std::fs::read(&original).unwrap(), jpeg);
+        let capture =
+            get_photograph_capture(&catalog_path, "Detail Catalog", "Shoot", "day1/frame.jpg")
+                .unwrap();
+        let capture = serde_json::to_value(capture).unwrap();
+        assert_eq!(capture["camera"], "Test Camera");
+        assert_eq!(capture["iso"], 400);
+        assert!(capture["lens"].is_null());
+
+        std::fs::remove_file(&original).unwrap();
+        let shoot = get_shoot(&catalog_path, "Shoot").unwrap();
+        assert!(shoot.photographs[0].original_absolute_path.is_none());
+        assert!(shoot.photographs[0].thumbnail_absolute_path.is_file());
+
+        #[cfg(unix)]
+        {
+            let outside = source.path().join("outside.jpg");
+            std::fs::write(&outside, &jpeg).unwrap();
+            std::os::unix::fs::symlink(&outside, &original).unwrap();
+            let shoot = get_shoot(&catalog_path, "Shoot").unwrap();
+            assert!(shoot.photographs[0].original_absolute_path.is_none());
+        }
     }
 
     #[test]

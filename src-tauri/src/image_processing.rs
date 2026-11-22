@@ -1,9 +1,11 @@
-use std::io::Cursor;
+use std::fs::File;
+use std::io::{self, BufReader, Cursor};
 use std::path::Path;
 
-use exif::{In, Reader, Tag};
+use exif::{Exif, In, Reader, Tag, Value};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat, ImageReader};
+use serde::Serialize;
 
 pub const MAX_THUMBNAIL_DIMENSION: u32 = 640;
 pub const THUMBNAIL_JPEG_QUALITY: u8 = 82;
@@ -34,6 +36,17 @@ pub struct PreparedPhotograph {
     pub height: u32,
     pub format: SupportedFormat,
     pub thumbnail_jpeg: Vec<u8>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CaptureDetails {
+    camera: Option<String>,
+    lens: Option<String>,
+    captured_at: Option<String>,
+    aperture: Option<String>,
+    shutter_speed: Option<String>,
+    iso: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +114,64 @@ fn read_orientation(bytes: &[u8]) -> u32 {
     exif.get_field(Tag::Orientation, In::PRIMARY)
         .and_then(|field| field.value.get_uint(0))
         .unwrap_or(1)
+}
+
+pub(crate) fn load_capture_details(path: &Path) -> io::Result<CaptureDetails> {
+    let mut original = BufReader::new(File::open(path)?);
+    Ok(Reader::new()
+        .read_from_container(&mut original)
+        .ok()
+        .as_ref()
+        .map(read_capture_details)
+        .unwrap_or_default())
+}
+
+fn read_capture_details(exif: &Exif) -> CaptureDetails {
+    let text = |tag| match &exif.get_field(tag, In::PRIMARY)?.value {
+        Value::Ascii(values) => {
+            let value = String::from_utf8_lossy(values.first()?);
+            let value = value
+                .trim_matches(|character: char| character.is_whitespace() || character == '\0');
+            (!value.is_empty()).then(|| value.to_owned())
+        }
+        _ => None,
+    };
+    let exposure = |tag| {
+        let field = exif.get_field(tag, In::PRIMARY)?;
+        match &field.value {
+            Value::Rational(values)
+                if values
+                    .first()
+                    .is_some_and(|value| value.num > 0 && value.denom > 0) =>
+            {
+                Some(field.display_value().with_unit(exif).to_string())
+            }
+            _ => None,
+        }
+    };
+    let model = text(Tag::Model);
+    let make = text(Tag::Make);
+    let camera = match (make, model) {
+        (Some(make), Some(model)) if !model.to_lowercase().starts_with(&make.to_lowercase()) => {
+            Some(format!("{make} {model}"))
+        }
+        (make, model) => model.or(make),
+    };
+    let captured_at = text(Tag::DateTimeOriginal)
+        .and_then(|value| chrono::NaiveDateTime::parse_from_str(&value, "%Y:%m:%d %H:%M:%S").ok())
+        .map(|date| date.format("%Y-%m-%d %H:%M:%S").to_string());
+
+    CaptureDetails {
+        camera,
+        lens: text(Tag::LensModel),
+        captured_at,
+        aperture: exposure(Tag::FNumber),
+        shutter_speed: exposure(Tag::ExposureTime),
+        iso: exif
+            .get_field(Tag::PhotographicSensitivity, In::PRIMARY)
+            .and_then(|field| field.value.get_uint(0))
+            .filter(|iso| *iso > 0),
+    }
 }
 
 pub fn oriented_dimensions(width: u32, height: u32, orientation: u32) -> (u32, u32) {

@@ -3,12 +3,19 @@ export type CatalogError = {
   message: string;
 };
 
+export type ShootMedium =
+  | { kind: "film"; filmStock: string | null }
+  | { kind: "digital" };
+
+export type SourceMediumHint = "noritsu" | "possibleFilmRoll" | "noneFound";
+
 export type ShootSummary = {
   name: string;
   relativePath: string;
   importedAt: string;
   photographCount: number;
   skippedFileCount: number;
+  medium: ShootMedium | null;
 };
 
 export type PhotographEntry = {
@@ -81,4 +88,5 @@ export type CreateCatalogInput = {
 export type ImportShootInput = {
   sourcePath: string;
   shootName: string;
+  medium: ShootMedium | null;
 };

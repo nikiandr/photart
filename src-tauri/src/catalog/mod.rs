@@ -5,6 +5,7 @@ mod create;
 mod detail;
 mod discover;
 mod error;
+mod film;
 mod import;
 mod manifest;
 mod names;
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub use actions::{purge_shoot, rename_shoot};
+pub use actions::{purge_shoot, update_shoot};
 #[allow(unused_imports)] // re-exported for Tauri commands
 pub use create::create_catalog;
 pub(crate) use detail::get_photograph_detail;
@@ -23,6 +24,7 @@ pub(crate) use detail::get_photograph_detail;
 pub use discover::resolve_dev_catalog_seed;
 #[allow(unused_imports)]
 pub use error::CatalogError;
+pub use film::{inspect_source_medium, SourceMediumHint};
 #[allow(unused_imports)]
 pub use import::{import_shoot, ImportCoordinator, ImportPermit};
 #[allow(unused_imports)]
@@ -66,6 +68,31 @@ pub struct ShootSummary {
     pub imported_at: String,
     pub photograph_count: u32,
     pub skipped_file_count: u32,
+    pub medium: Option<ShootMedium>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ShootMedium {
+    Film { film_stock: Option<String> },
+    Digital,
+}
+
+impl ShootMedium {
+    fn normalized(self) -> Self {
+        match self {
+            Self::Film { film_stock } => Self::Film {
+                film_stock: film_stock
+                    .map(|stock| stock.trim().to_owned())
+                    .filter(|stock| !stock.is_empty()),
+            },
+            Self::Digital => Self::Digital,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -179,6 +206,77 @@ mod tests {
             .write_to(&mut bytes, ImageFormat::Jpeg)
             .expect("jpeg should encode");
         std::fs::write(path, bytes.into_inner()).unwrap();
+    }
+
+    fn write_camera_jpeg(path: &Path, make: &str, model: &str) {
+        use exif::{experimental::Writer, Field, In, Tag, Value};
+        use image::{codecs::jpeg::JpegEncoder, ImageEncoder};
+
+        let fields = [(Tag::Make, make), (Tag::Model, model)].map(|(tag, text)| Field {
+            tag,
+            ifd_num: In::PRIMARY,
+            value: Value::Ascii(vec![text.as_bytes().to_vec()]),
+        });
+        let mut writer = Writer::new();
+        for field in &fields {
+            writer.push_field(field);
+        }
+        let mut exif = Cursor::new(Vec::new());
+        writer.write(&mut exif, false).unwrap();
+        let mut jpeg = Vec::new();
+        let mut encoder = JpegEncoder::new(&mut jpeg);
+        encoder.set_exif_metadata(exif.into_inner()).unwrap();
+        encoder
+            .encode(&[0; 12], 2, 2, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        std::fs::write(path, jpeg).unwrap();
+    }
+
+    #[test]
+    fn source_medium_requires_the_noritsu_pair_and_does_not_preselect_mixed_sources() {
+        let source = TestDirectory::new("noritsu-source");
+        let camera = source.path().join("camera.jpg");
+        write_camera_jpeg(&camera, "FUJIFILM", "X-T5");
+        assert_eq!(
+            inspect_source_medium(source.path()).unwrap(),
+            SourceMediumHint::NoneFound
+        );
+
+        write_camera_jpeg(
+            &source.path().join("scan.jpg"),
+            " noritsu  koki ",
+            "EZ Controller",
+        );
+        assert_eq!(
+            inspect_source_medium(source.path()).unwrap(),
+            SourceMediumHint::NoneFound
+        );
+
+        std::fs::remove_file(camera).unwrap();
+        std::fs::write(source.path().join("._scan.jpg"), b"AppleDouble").unwrap();
+        assert_eq!(
+            inspect_source_medium(source.path()).unwrap(),
+            SourceMediumHint::Noritsu
+        );
+    }
+
+    #[test]
+    fn source_medium_suggests_a_roll_only_when_filename_and_jpeg_clues_agree() {
+        let source = TestDirectory::new("roll-source");
+        let roll = source.path().join("A000645");
+        for frame in 0..5 {
+            write_jpeg(&roll.join(format!("A000645-R1-{frame:02}-1A.JPG")), 8, 4);
+        }
+        assert_eq!(
+            inspect_source_medium(source.path()).unwrap(),
+            SourceMediumHint::PossibleFilmRoll
+        );
+
+        write_jpeg(&roll.join("A000645-R1-05-6.JPG"), 9, 4);
+        assert_eq!(
+            inspect_source_medium(source.path()).unwrap(),
+            SourceMediumHint::NoneFound
+        );
     }
 
     fn create_ready_catalog(name: &str) -> (TestDirectory, TestDirectory, PathBuf, AppConfigStore) {
@@ -364,6 +462,7 @@ mod tests {
             &catalog_path,
             source.path(),
             "Spring Shoot",
+            None,
             |progress| phases.push(progress.phase.clone()),
             &cancel,
         )
@@ -445,6 +544,7 @@ mod tests {
             &catalog_path,
             source.path(),
             "Shoot",
+            None,
             |_| {},
             &AtomicBool::new(false),
         )
@@ -510,16 +610,21 @@ mod tests {
             .set_len(100 * 1024 * 1024 + 1)
             .unwrap();
 
+        let medium = Some(ShootMedium::Film {
+            film_stock: Some("Portra 400".into()),
+        });
         let result = import_shoot(
             &catalog_path,
             source.path(),
             "Shoot",
+            medium.clone(),
             |_| {},
             &AtomicBool::new(false),
         )
         .unwrap();
         assert_eq!(result.skipped_file_count, 3);
         let shoot = get_shoot(&catalog_path, "Shoot").unwrap();
+        assert_eq!(shoot.summary.medium, medium);
         assert_eq!(shoot.photographs.len(), originals.len());
         let detail_dir =
             paths::shoot_thumbnails_dir(&catalog_path, "Shoot").join(paths::DETAIL_DIR);
@@ -563,7 +668,7 @@ mod tests {
             .set_times(FileTimes::new().set_modified(cache_time))
             .unwrap();
 
-        rename_shoot(&catalog_path, "Shoot", "Renamed").unwrap();
+        update_shoot(&catalog_path, "Shoot", "Renamed", medium.clone()).unwrap();
         let moved = get_photograph_detail(&catalog_path, "Renamed", "phone.HEIC").unwrap();
         assert!(!phone.exists());
         assert_eq!(
@@ -583,6 +688,7 @@ mod tests {
         assert_eq!(fs::read(&moved).unwrap(), expected);
         fs::remove_file(&moved).unwrap();
         let reopened = get_shoot(&catalog_path, "Renamed").unwrap();
+        assert_eq!(reopened.summary.medium, medium);
         assert!(!moved.exists());
         assert!(reopened.photographs[0].thumbnail_absolute_path.is_file());
         get_photograph_detail(&catalog_path, "Renamed", "phone.HEIC").unwrap();
@@ -606,8 +712,15 @@ mod tests {
         )));
 
         let cancel = AtomicBool::new(false);
-        let result =
-            import_shoot(&catalog_path, source.path(), "Ext Shoot", |_| {}, &cancel).unwrap();
+        let result = import_shoot(
+            &catalog_path,
+            source.path(),
+            "Ext Shoot",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap();
         assert_eq!(result.shoot.summary.photograph_count, 3);
     }
 
@@ -629,8 +742,15 @@ mod tests {
         }
 
         let cancel = AtomicBool::new(false);
-        let result =
-            import_shoot(&catalog_path, source.path(), "Sym Shoot", |_| {}, &cancel).unwrap();
+        let result = import_shoot(
+            &catalog_path,
+            source.path(),
+            "Sym Shoot",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap();
         assert_eq!(result.shoot.summary.photograph_count, 1);
         assert_eq!(result.shoot.photographs[0].relative_path, "real.png");
     }
@@ -643,8 +763,15 @@ mod tests {
         std::fs::write(source.path().join("bad.jpg"), b"nope").unwrap();
 
         let cancel = AtomicBool::new(false);
-        let error =
-            import_shoot(&catalog_path, source.path(), "Empty Shoot", |_| {}, &cancel).unwrap_err();
+        let error = import_shoot(
+            &catalog_path,
+            source.path(),
+            "Empty Shoot",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap_err();
         assert_eq!(error.code, "no_photographs");
         assert!(!catalog_path.join("Empty Shoot").exists());
         let manifest = manifest::read_manifest(&catalog_path).unwrap();
@@ -657,11 +784,11 @@ mod tests {
         let source = TestDirectory::new("dup-source");
         write_png(&source.path().join("a.png"), 2, 2);
         let cancel = AtomicBool::new(false);
-        import_shoot(&catalog_path, source.path(), "Same", |_| {}, &cancel).unwrap();
+        import_shoot(&catalog_path, source.path(), "Same", None, |_| {}, &cancel).unwrap();
         let before = std::fs::read_to_string(paths::manifest_path(&catalog_path)).unwrap();
 
         let error =
-            import_shoot(&catalog_path, source.path(), "Same", |_| {}, &cancel).unwrap_err();
+            import_shoot(&catalog_path, source.path(), "Same", None, |_| {}, &cancel).unwrap_err();
         assert_eq!(error.code, "shoot_exists");
         let after = std::fs::read_to_string(paths::manifest_path(&catalog_path)).unwrap();
         assert_eq!(before, after);
@@ -673,8 +800,15 @@ mod tests {
         write_png(&catalog_path.join("inside.png"), 2, 2);
         let cancel = AtomicBool::new(false);
 
-        let error =
-            import_shoot(&catalog_path, &catalog_path, "Overlap", |_| {}, &cancel).unwrap_err();
+        let error = import_shoot(
+            &catalog_path,
+            &catalog_path,
+            "Overlap",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap_err();
         assert_eq!(error.code, "source_catalog_overlap");
     }
 
@@ -686,8 +820,15 @@ mod tests {
         write_png(&source.path().join("b/photo.png"), 3, 3);
 
         let cancel = AtomicBool::new(false);
-        let result =
-            import_shoot(&catalog_path, source.path(), "Thumb Shoot", |_| {}, &cancel).unwrap();
+        let result = import_shoot(
+            &catalog_path,
+            source.path(),
+            "Thumb Shoot",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap();
 
         let thumbs: Vec<_> = result
             .shoot
@@ -712,9 +853,25 @@ mod tests {
         write_png(&source_b.path().join("only.png"), 2, 2);
 
         let cancel = AtomicBool::new(false);
-        import_shoot(&catalog_path, source_a.path(), "First", |_| {}, &cancel).unwrap();
+        import_shoot(
+            &catalog_path,
+            source_a.path(),
+            "First",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap();
         thread::sleep(Duration::from_millis(1100));
-        import_shoot(&catalog_path, source_b.path(), "Second", |_| {}, &cancel).unwrap();
+        import_shoot(
+            &catalog_path,
+            source_b.path(),
+            "Second",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap();
 
         let config = store.get().unwrap();
         let CatalogState::Ready { catalog } = get_catalog_state(&config, None).unwrap() else {
@@ -757,6 +914,7 @@ mod tests {
             &catalog_path,
             source.path(),
             "Cancel Shoot",
+            None,
             &mut |_| {},
             &cancel,
             &faults,
@@ -800,6 +958,7 @@ mod tests {
             &catalog_path,
             source.path(),
             "Copy Shoot",
+            None,
             &mut |_| {},
             &cancel,
             &faults,
@@ -829,6 +988,7 @@ mod tests {
             &catalog_path,
             source.path(),
             "Ghost Shoot",
+            None,
             &mut |_| {},
             &cancel,
             &faults,
@@ -858,6 +1018,9 @@ mod tests {
             &catalog_path,
             source.path(),
             "Commit Shoot",
+            Some(ShootMedium::Film {
+                film_stock: Some(" Kodak Gold 200 ".into()),
+            }),
             |_| {},
             &cancel,
         )
@@ -871,6 +1034,13 @@ mod tests {
         assert_eq!(manifest.shoots.len(), 1);
         assert_eq!(manifest.shoots[0].name, "Commit Shoot");
         assert_eq!(manifest.shoots[0].photograph_count, 1);
+        assert_eq!(
+            manifest.shoots[0].medium,
+            Some(ShootMedium::Film {
+                film_stock: Some("Kodak Gold 200".into())
+            })
+        );
+        assert_eq!(result.shoot.summary.medium, manifest.shoots[0].medium);
         assert_eq!(result.shoot.photographs[0].width, 5);
         assert_eq!(result.shoot.photographs[0].height, 7);
     }
@@ -926,8 +1096,15 @@ mod tests {
         let cancel_flag = Arc::clone(&cancel);
         cancel_flag.store(true, Ordering::SeqCst);
 
-        let error =
-            import_shoot(&catalog_path, source.path(), "Flag Shoot", |_| {}, &cancel).unwrap_err();
+        let error = import_shoot(
+            &catalog_path,
+            source.path(),
+            "Flag Shoot",
+            None,
+            |_| {},
+            &cancel,
+        )
+        .unwrap_err();
         assert_eq!(error.code, "import_cancelled");
         assert!(manifest::read_manifest(&catalog_path)
             .unwrap()

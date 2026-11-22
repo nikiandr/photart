@@ -8,21 +8,27 @@ use super::manifest::{self, ShootRecord};
 use super::names::validate_single_path_component_name;
 use super::paths;
 use super::state::shoot_details_from_record;
-use super::ShootDetails;
+use super::{ShootDetails, ShootMedium};
 
 static ACTION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-pub fn rename_shoot(
+pub fn update_shoot(
     catalog_path: &Path,
     shoot_name: &str,
     new_name: &str,
+    medium: Option<ShootMedium>,
 ) -> Result<ShootDetails, CatalogError> {
     let _cache = lock_detail_cache()?;
     let new_name = validate_single_path_component_name(new_name)?;
     let mut manifest = manifest::read_manifest(catalog_path)?;
     let shoot_index = find_shoot_index(&manifest.shoots, shoot_name)?;
 
+    let medium = medium.map(ShootMedium::normalized);
     if manifest.shoots[shoot_index].name == new_name {
+        if manifest.shoots[shoot_index].medium != medium {
+            manifest.shoots[shoot_index].medium = medium;
+            manifest::write_manifest(catalog_path, &manifest)?;
+        }
         return shoot_details_from_record(catalog_path, &manifest.shoots[shoot_index]);
     }
 
@@ -34,7 +40,8 @@ pub fn rename_shoot(
     }
 
     let previous = manifest.shoots[shoot_index].clone();
-    let renamed = renamed_record(&previous, &new_name)?;
+    let mut renamed = renamed_record(&previous, &new_name)?;
+    renamed.medium = medium;
     let old_originals = catalog_path.join(&previous.relative_path);
     let new_originals = catalog_path.join(&new_name);
     let old_thumbnails = paths::shoot_thumbnails_dir(catalog_path, &previous.name);
@@ -316,6 +323,7 @@ mod tests {
                 imported_at: "2026-08-02T12:00:00Z".into(),
                 photograph_count: 1,
                 skipped_file_count: 0,
+                medium: None,
                 photographs: vec![PhotographRecord {
                     relative_path: "frame.jpg".into(),
                     file_name: "frame.jpg".into(),
@@ -339,9 +347,11 @@ mod tests {
         let catalog = TestCatalog::new();
         catalog.add_shoot("Before");
 
-        let renamed = rename_shoot(&catalog.0, "Before", "After").unwrap();
+        let renamed =
+            update_shoot(&catalog.0, "Before", "After", Some(ShootMedium::Digital)).unwrap();
 
         assert_eq!(renamed.summary.name, "After");
+        assert_eq!(renamed.summary.medium, Some(ShootMedium::Digital));
         assert!(catalog.0.join("After/frame.jpg").exists());
         assert!(!catalog.0.join("Before").exists());
         assert!(paths::shoot_thumbnails_dir(&catalog.0, "After")
@@ -350,6 +360,32 @@ mod tests {
         assert_eq!(
             renamed.photographs[0].thumbnail_relative_path,
             ".photart/thumbnails/After/frame.jpg"
+        );
+    }
+
+    #[test]
+    fn editing_medium_without_renaming_persists_and_can_be_cleared() {
+        let catalog = TestCatalog::new();
+        catalog.add_shoot("Film Shoot");
+        let edited = update_shoot(
+            &catalog.0,
+            "Film Shoot",
+            "Film Shoot",
+            Some(ShootMedium::Film {
+                film_stock: Some("  ".into()),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            edited.summary.medium,
+            Some(ShootMedium::Film { film_stock: None })
+        );
+        assert!(catalog.0.join("Film Shoot/frame.jpg").exists());
+
+        update_shoot(&catalog.0, "Film Shoot", "Film Shoot", None).unwrap();
+        assert_eq!(
+            manifest::read_manifest(&catalog.0).unwrap().shoots[0].medium,
+            None
         );
     }
 
@@ -383,7 +419,7 @@ mod tests {
         manifest.shoots.push(other);
         manifest::write_manifest(&catalog.0, &manifest).unwrap();
 
-        let error = rename_shoot(&catalog.0, "Before", "Existing").unwrap_err();
+        let error = update_shoot(&catalog.0, "Before", "Existing", None).unwrap_err();
 
         assert_eq!(error.code, "shoot_exists");
         assert!(catalog.0.join("Before/frame.jpg").exists());

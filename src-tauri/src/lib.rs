@@ -9,9 +9,9 @@ use app_config::{AppConfigError, AppConfigStore};
 use catalog::{
     create_catalog as create_catalog_on_disk, get_catalog_state as resolve_catalog_state,
     get_shoot as resolve_shoot, import_shoot as run_import_shoot,
-    purge_shoot as purge_catalog_shoot, rename_shoot as rename_catalog_shoot, CatalogError,
+    purge_shoot as purge_catalog_shoot, update_shoot as update_catalog_shoot, CatalogError,
     CatalogSnapshot, CatalogState, CreateCatalogInput, ImportCoordinator, ImportProgress,
-    ImportShootResult, ShootDetails,
+    ImportShootResult, ShootDetails, ShootMedium, SourceMediumHint,
 };
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, Runtime, State};
@@ -106,20 +106,21 @@ async fn get_photograph_capture(
 }
 
 #[tauri::command]
-async fn rename_shoot(
+async fn update_shoot(
     app: AppHandle,
     shoot_name: String,
     new_name: String,
+    medium: Option<ShootMedium>,
 ) -> Result<ShootDetails, CatalogError> {
     let catalog_path = require_ready_catalog_path(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        rename_catalog_shoot(&catalog_path, &shoot_name, &new_name)
+        update_catalog_shoot(&catalog_path, &shoot_name, &new_name, medium)
     })
     .await
     .map_err(|error| {
         CatalogError::new(
-            "shoot_rename_join",
-            format!("Shoot rename could not finish: {error}"),
+            "shoot_update_join",
+            format!("Shoot changes could not be applied: {error}"),
         )
     })?
 }
@@ -138,11 +139,24 @@ async fn purge_shoot(app: AppHandle, shoot_name: String) -> Result<(), CatalogEr
 }
 
 #[tauri::command]
+async fn inspect_source_medium(source_path: PathBuf) -> Result<SourceMediumHint, CatalogError> {
+    tauri::async_runtime::spawn_blocking(move || catalog::inspect_source_medium(&source_path))
+        .await
+        .map_err(|error| {
+            CatalogError::new(
+                "source_scan",
+                format!("Source check could not finish: {error}"),
+            )
+        })?
+}
+
+#[tauri::command]
 async fn import_shoot(
     app: AppHandle,
     import_id: String,
     source_path: PathBuf,
     shoot_name: String,
+    medium: Option<ShootMedium>,
     on_progress: Channel<ImportProgress>,
     imports: State<'_, ImportCoordinator>,
 ) -> Result<ImportShootResult, CatalogError> {
@@ -157,6 +171,7 @@ async fn import_shoot(
             &catalog_path,
             &source_path,
             &shoot_name,
+            medium,
             |progress| {
                 let _ = on_progress.send(progress);
             },
@@ -292,7 +307,8 @@ pub fn run() {
             get_shoot,
             get_photograph_detail,
             get_photograph_capture,
-            rename_shoot,
+            update_shoot,
+            inspect_source_medium,
             purge_shoot,
             import_shoot,
             cancel_shoot_import,

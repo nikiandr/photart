@@ -11,6 +11,8 @@ import type {
   PhotographCapture,
   PhotographEntry,
   ShootDetails,
+  ShootMedium,
+  SourceMediumHint,
 } from "@/types";
 
 function normalizeError(error: unknown): CatalogError {
@@ -98,14 +100,20 @@ export async function loadPhotographDetail(shootName: string, relativePath: stri
   return convertFileSrc(path);
 }
 
-export async function renameShoot(
+export function inspectSourceMedium(sourcePath: string): Promise<SourceMediumHint> {
+  return invoke("inspect_source_medium", { sourcePath });
+}
+
+export async function updateShoot(
   shootName: string,
   newName: string,
+  medium: ShootMedium | null,
 ): Promise<ShootDetails> {
   try {
-    const shoot = await invoke<RawShootDetails>("rename_shoot", {
+    const shoot = await invoke<RawShootDetails>("update_shoot", {
       shootName,
       newName,
+      medium,
     });
     return withAssetUrls(shoot);
   } catch (error) {
@@ -145,6 +153,7 @@ export function importShoot(
         importId,
         sourcePath: input.sourcePath,
         shootName: input.shootName,
+        medium: input.medium,
         onProgress: channel,
       });
       return {

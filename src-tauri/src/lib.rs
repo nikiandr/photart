@@ -190,6 +190,27 @@ fn config_error_to_catalog(error: AppConfigError) -> CatalogError {
     CatalogError::new(&error.code, error.message)
 }
 
+fn seed_development_catalog(app: &AppHandle, store: &AppConfigStore) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+
+    let Ok(config) = store.get() else {
+        return;
+    };
+    if config.catalog.is_some() {
+        return;
+    }
+
+    let legacy = app_config::legacy_worktree_config_path();
+    let pictures = app.path().picture_dir().ok();
+    let Some(pointer) = catalog::resolve_dev_catalog_seed(legacy.as_deref(), pictures.as_deref())
+    else {
+        return;
+    };
+    let _ = store.set_catalog(Some(pointer));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -199,6 +220,7 @@ pub fn run() {
             let status = match app_config::config_path(app.handle()) {
                 Ok(path) => match AppConfigStore::open(path) {
                     Ok(store) => {
+                        seed_development_catalog(app.handle(), &store);
                         if let Ok(config) = store.get() {
                             if let Some(catalog) = config.catalog {
                                 let _ = app

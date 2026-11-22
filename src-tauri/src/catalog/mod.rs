@@ -2,6 +2,7 @@
 
 mod actions;
 mod create;
+mod discover;
 mod error;
 mod import;
 mod manifest;
@@ -16,6 +17,8 @@ use serde::{Deserialize, Serialize};
 pub use actions::{purge_shoot, rename_shoot};
 #[allow(unused_imports)] // re-exported for Tauri commands
 pub use create::create_catalog;
+#[allow(unused_imports)]
+pub use discover::resolve_dev_catalog_seed;
 #[allow(unused_imports)]
 pub use error::CatalogError;
 #[allow(unused_imports)]

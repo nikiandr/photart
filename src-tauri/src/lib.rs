@@ -59,6 +59,25 @@ fn get_shoot(app: AppHandle, shoot_name: String) -> Result<ShootDetails, Catalog
 }
 
 #[tauri::command]
+async fn get_photograph_detail(
+    app: AppHandle,
+    shoot_name: String,
+    relative_path: String,
+) -> Result<PathBuf, CatalogError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let catalog_path = require_ready_catalog_path(&app)?;
+        catalog::get_photograph_detail(&catalog_path, &shoot_name, &relative_path)
+    })
+    .await
+    .map_err(|error| {
+        CatalogError::new(
+            "photograph_detail_join",
+            format!("Detail image could not be prepared: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
 async fn get_photograph_capture(
     app: AppHandle,
     shoot_name: String,
@@ -286,6 +305,7 @@ pub fn run() {
             get_catalog_state,
             create_catalog,
             get_shoot,
+            get_photograph_detail,
             get_photograph_capture,
             update_shoot,
             inspect_source_medium,

@@ -1,10 +1,10 @@
 import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent, SyntheticEvent } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { loadPhotographCapture } from "@/lib/catalog";
+import { loadPhotographDetail, type loadPhotographCapture } from "@/lib/catalog";
 import type { PhotographEntry } from "@/types";
 import { usePhotographCapture } from "./usePhotographCapture";
 
@@ -19,7 +19,7 @@ export type PhotographDetailViewProps = {
   loadCapture: typeof loadPhotographCapture;
 };
 
-type OriginalStatus = "ready" | "unavailable";
+type DisplayStatus = "ready" | "unavailable";
 
 function cancelRemovedImage(image: HTMLImageElement | null) {
   if (image) {
@@ -51,25 +51,43 @@ export function PhotographDetailView({
     loadCapture,
     shootName,
     active.relativePath,
-    active.originalUrl,
+    active.originalAvailable,
   );
-  const [originalLoads, setOriginalLoads] = useState(() => new Map<string, OriginalStatus>());
+  const [displayLoads, setDisplayLoads] = useState(() => new Map<string, DisplayStatus>());
   const [timing, setTiming] = useState<{ openedAt: number; milliseconds: number }>();
-  const activeStatus = active.originalUrl === null
-    ? "unavailable"
-    : originalLoads.get(active.relativePath);
+  const [detail, setDetail] = useState<{ path: string; openedAt: number | null; url: string | null }>();
+  const loadingDetail = useRef(false);
+  const activePath = active.relativePath;
+  const needsDetail = active.usesDetailCache && active.originalAvailable;
+  const resolved = detail?.path === activePath && detail.openedAt === openedAt;
+  const activeUrl = needsDetail ? (resolved ? detail.url : null) : active.displayUrl;
+  const activeStatus = activeUrl ? displayLoads.get(activePath)
+    : needsDetail && !resolved ? undefined : "unavailable";
   const sharp = activeStatus === "ready";
   const neighbors = direction === 1 ? [next, previous] : [previous, next];
   // Keep decoded neighbors mounted. Start at most one nearby preload after the stage settles.
   const preload = activeStatus === undefined ? undefined : neighbors.find(
-    (photo) => photo?.originalUrl && !originalLoads.has(photo.relativePath),
+    (photo) => photo?.displayUrl && !displayLoads.has(photo.relativePath),
   );
-  const originalImages = [
+  const displayImages = [
     active,
     ...neighbors.filter((photo) => photo && (
-      originalLoads.get(photo.relativePath) === "ready" || photo === preload
+      displayLoads.get(photo.relativePath) === "ready" || photo === preload
     )),
   ];
+
+  useEffect(() => {
+    if (needsDetail && !resolved && !loadingDetail.current) {
+      loadingDetail.current = true;
+      void loadPhotographDetail(shootName, activePath).then(
+        (url) => ({ path: activePath, openedAt, url }),
+        () => ({ path: activePath, openedAt, url: null }),
+      ).then((result) => {
+        loadingDetail.current = false;
+        setDetail(result);
+      });
+    }
+  }, [activePath, detail, needsDetail, openedAt, resolved, shootName]);
 
   useLayoutEffect(() => {
     backButton.current?.focus({ preventScroll: true });
@@ -88,7 +106,7 @@ export function PhotographDetailView({
   useLayoutEffect(() => {
     if (openedAt !== null && sharp) {
       let afterPaint: number | undefined;
-      // The first frame can paint the revealed original. Publish the time on the following frame.
+      // The first frame can paint the revealed detail image. Publish the time on the following frame.
       const beforePaint = requestAnimationFrame(() => {
         const milliseconds = performance.now() - openedAt;
         afterPaint = requestAnimationFrame(() => setTiming({ openedAt, milliseconds }));
@@ -104,11 +122,11 @@ export function PhotographDetailView({
     const photograph = photographs[index];
     if (photograph && index !== activeIndex) {
       const neighbors = photographs.slice(Math.max(0, index - 1), index + 2);
-      setOriginalLoads((current) => {
-        const retained = new Map<string, OriginalStatus>();
+      setDisplayLoads((current) => {
+        const retained = new Map<string, DisplayStatus>();
         for (const neighbor of neighbors) {
           const status = current.get(neighbor.relativePath);
-          if (status && (status === "ready" || neighbor !== photograph)) {
+          if (status && !neighbor.usesDetailCache && (status === "ready" || neighbor !== photograph)) {
             retained.set(neighbor.relativePath, status);
           }
         }
@@ -118,17 +136,17 @@ export function PhotographDetailView({
     }
   }
 
-  function updateOriginal(image: HTMLImageElement, path: string, status: OriginalStatus) {
+  function updateDisplay(image: HTMLImageElement, path: string, status: DisplayStatus) {
     if (image.isConnected) {
-      setOriginalLoads((current) => new Map(current).set(path, status));
+      setDisplayLoads((current) => new Map(current).set(path, status));
     }
   }
 
-  function decodeOriginal(event: SyntheticEvent<HTMLImageElement>, path: string) {
+  function decodeDisplay(event: SyntheticEvent<HTMLImageElement>, path: string) {
     const image = event.currentTarget;
     void image.decode().then(
-      () => updateOriginal(image, path, "ready"),
-      () => updateOriginal(image, path, "unavailable"),
+      () => updateDisplay(image, path, "ready"),
+      () => updateDisplay(image, path, "unavailable"),
     );
   }
 
@@ -212,18 +230,19 @@ export function PhotographDetailView({
               alt={sharp ? "" : active.fileName}
               className={`block size-full object-contain${sharp ? " invisible" : ""}`}
             />
-            {originalImages.map((photo) => {
+            {displayImages.map((photo) => {
               const isActive = photo === active;
               const visible = isActive && sharp;
-              return photo?.originalUrl ? (
+              const url = isActive ? activeUrl : photo?.displayUrl;
+              return photo && url ? (
                 <img
                   key={photo.relativePath}
                   ref={cancelRemovedImage}
                   alt={visible ? photo.fileName : ""}
                   fetchPriority={isActive ? "high" : "low"}
-                  src={photo.originalUrl}
-                  onLoad={(event) => decodeOriginal(event, photo.relativePath)}
-                  onError={(event) => updateOriginal(event.currentTarget, photo.relativePath, "unavailable")}
+                  src={url}
+                  onLoad={(event) => decodeDisplay(event, photo.relativePath)}
+                  onError={(event) => updateDisplay(event.currentTarget, photo.relativePath, "unavailable")}
                   className={`absolute inset-0 size-full object-contain${visible ? "" : " invisible"}`}
                 />
               ) : null;
@@ -252,7 +271,7 @@ export function PhotographDetailView({
           </dl>
           {activeStatus === "unavailable" ? (
             <p role="status" className="border-t border-border pt-2 text-xs text-muted-foreground">
-              Original unavailable.
+              Detail image unavailable.
             </p>
           ) : null}
         </aside>

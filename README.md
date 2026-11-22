@@ -66,6 +66,10 @@ ad-hoc signed, so another Mac needs a right-click → Open the first time.
 
 `bun run tauri build` produces the same Photart app for the current platform.
 
+The build compiles the bundled LibRaw source; no system LibRaw or Homebrew
+decoder installation is needed. See [LibRaw distribution](docs/libraw-distribution.md)
+for the source, notices, and website release checklist.
+
 On Linux, install the [Tauri v2 system dependencies](https://v2.tauri.app/start/prerequisites/#linux) first, plus Rust (via [rustup](https://rustup.rs/)) and [Bun](https://bun.sh/). On Debian/Ubuntu:
 
 ```sh

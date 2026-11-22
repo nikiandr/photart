@@ -7,14 +7,15 @@
 | `.jpg`, `.jpeg`, `.png`, `.webp` | The existing JPEG thumbnail and original-file detail view. |
 | `.heic`, `.heif` | The primary still image, including tiled grids supported by the decoder. The HEIF file must have a `heic`, `heix`, or `mif1` major brand and an 8-bit intra-coded HEVC image in 4:2:0 or monochrome. AVIF, other codecs, 10-bit HEIC, and sequence playback are not supported. HEIF crop, rotation, and mirroring are applied by the decoder; EXIF orientation is not applied a second time or used as a fallback. Depth, gain maps, and secondary images are not rendered. |
 | `.tif`, `.tiff` | The first page of a classic TIFF or BigTIFF, with TIFF orientation applied. Common grayscale, RGB(A), and 16-bit RGB TIFFs work; decoding is limited to the colors and compressions implemented by the `image` TIFF adapter and `tiff` crate. Not all TIFF variants work (for example, the adapter does not handle palette TIFF). Multipage files are not split into separate photographs. |
+| `.cr2`, `.cr3`, `.nef`, `.arw`, `.raf`, `.dng` | An embedded JPEG if usable, otherwise a display JPEG rendered from the RAW pixels. Camera model and capture mode affect compatibility; the extension alone does not guarantee support. |
 
 Import checks the content as well as the extension. TIFF's container is also
 used by some camera RAW files: Photart rejects DNG version tags, CFA tags,
 raw photometric interpretations, and the Canon CR2 header rather than
 importing an embedded preview as a photograph. It checks the TIFF image
 directories and SubIFDs (up to 64 directories, rejecting cycles or malformed
-links). Proprietary RAW files are not supported; these checks are not a
-general-purpose RAW classifier for every renamed proprietary format.
+links). These checks are not a general-purpose RAW classifier for every
+renamed proprietary format. Use the original file extension for RAW import.
 
 Inputs are capped at 100 MiB and 100 megapixels, with an additional 10,000-pixel
 per-axis HEIC limit and the underlying decoder's allocation and format limits.
@@ -27,8 +28,8 @@ metadata is not supported by the current EXIF reader.
 
 ## Detail cache
 
-Import always decodes the source and saves the 640-pixel Gallery thumbnail,
-but it does not render a detail image. Opening Detail for a HEIC or TIFF
+Import saves the 640-pixel Gallery thumbnail, but it does not render a
+detail image. Opening Detail for HEIC, TIFF, or RAW
 shows the thumbnail first and requests a JPEG (up to 2,560 pixels on the
 long edge). A cache hit uses the existing JPEG without decoding the source.
 On a miss the app rebuilds it from the original in the background. Gallery
@@ -42,6 +43,25 @@ on rename. It is safe to delete that `detail/` directory; photographs get
 new detail JPEGs as they are opened again. No automatic eviction is applied.
 Detail JPEGs from earlier imports at the same path can be reused. If the
 detail image cannot be prepared, the thumbnail remains visible.
+
+For RAW, Photart tries the embedded JPEG before unpacking sensor data. If the
+preview is unreadable or too small for the requested size, it tries a LibRaw
+render and keeps a readable embedded preview if rendering fails. The fallback
+uses camera white balance with automatic brightening disabled; it can look
+different from the camera-rendered JPEG. LibRaw supplies capture details for
+RAW originals. Photart does not display sensor-specific metadata or edit RAW
+pixels. RAW thumbnail and detail generation share the existing serialized
+HEIC/TIFF decode path. As with other formats, an import is skipped if no
+Gallery thumbnail can be generated.
+
+To exercise the complete Catalog import and Detail flow with the real RAW
+fixtures in `samples/raw`, run:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml raw_samples_import_and_render_details -- --ignored
+```
+
+See [LibRaw distribution](libraw-distribution.md) for the build and licensing.
 
 ## Decoder comparison
 

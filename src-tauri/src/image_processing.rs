@@ -9,6 +9,7 @@ use image::{DynamicImage, ImageFormat, ImageReader};
 use serde::Serialize;
 
 mod heic;
+mod raw;
 mod tiff;
 
 pub const MAX_THUMBNAIL_DIMENSION: u32 = 640;
@@ -24,6 +25,7 @@ enum SupportedFormat {
     Raster(ImageFormat),
     Heic,
     Tiff,
+    Raw,
 }
 
 impl SupportedFormat {
@@ -34,12 +36,13 @@ impl SupportedFormat {
             "webp" => Some(Self::Raster(ImageFormat::WebP)),
             "heic" | "heif" => Some(Self::Heic),
             "tif" | "tiff" => Some(Self::Tiff),
+            "cr2" | "cr3" | "nef" | "arw" | "raf" | "dng" => Some(Self::Raw),
             _ => None,
         }
     }
 
     fn needs_detail_jpeg(self) -> bool {
-        matches!(self, Self::Heic | Self::Tiff)
+        matches!(self, Self::Heic | Self::Tiff | Self::Raw)
     }
 }
 
@@ -94,7 +97,7 @@ pub fn prepare_photograph(
     path: &Path,
     bytes: &[u8],
 ) -> Result<PreparedPhotograph, ImageProcessingError> {
-    let (_decode_slot, image) = decode_oriented(path, bytes)?;
+    let (_decode_slot, image) = decode_oriented(path, bytes, MAX_THUMBNAIL_DIMENSION)?;
     Ok(PreparedPhotograph {
         width: image.width(),
         height: image.height(),
@@ -109,13 +112,14 @@ pub(crate) fn prepare_detail_jpeg(
     if !uses_detail_cache(path) {
         return Err(ImageProcessingError::UnsupportedFormat);
     }
-    let (_decode_slot, image) = decode_oriented(path, bytes)?;
+    let (_decode_slot, image) = decode_oriented(path, bytes, MAX_DETAIL_DIMENSION)?;
     render_jpeg(&image, MAX_DETAIL_DIMENSION, DETAIL_JPEG_QUALITY)
 }
 
 fn decode_oriented(
     path: &Path,
     bytes: &[u8],
+    goal: u32,
 ) -> Result<(Option<std::sync::MutexGuard<'static, ()>>, DynamicImage), ImageProcessingError> {
     if bytes.len() as u64 > MAX_FILE_SIZE_BYTES {
         return Err(ImageProcessingError::TooLarge);
@@ -128,6 +132,7 @@ fn decode_oriented(
             .unwrap_or_else(|error| error.into_inner())
     });
     let oriented = match format {
+        SupportedFormat::Raw => raw::decode(bytes, goal)?,
         SupportedFormat::Heic => heic::decode(bytes)?,
         SupportedFormat::Tiff => {
             let orientation = tiff::inspect(bytes)?;
@@ -177,6 +182,10 @@ fn read_orientation(bytes: &[u8]) -> u32 {
 }
 
 pub(crate) fn load_capture_details(path: &Path) -> io::Result<CaptureDetails> {
+    if SupportedFormat::from_path(path) == Some(SupportedFormat::Raw) {
+        let bytes = read_source(path)?;
+        return Ok(raw::capture_details(&bytes).unwrap_or_default());
+    }
     let file = File::open(path)?;
     if file.metadata()?.len() > MAX_FILE_SIZE_BYTES {
         return Ok(CaptureDetails::default());
@@ -340,12 +349,15 @@ mod tests {
 
     #[test]
     fn supported_extension_is_case_insensitive() {
-        for extension in ["JPG", "JpEg", "PnG", "WebP", "HEIC", "HeiF", "TIF", "TiFf"] {
+        for extension in [
+            "JPG", "JpEg", "PnG", "WebP", "HEIC", "HeiF", "TIF", "TiFf", "DNG", "ArW", "Cr2",
+            "CR3", "NEF", "RaF",
+        ] {
             assert!(is_supported_extension(Path::new(&format!(
                 "photo.{extension}"
             ))));
         }
-        for extension in ["dng", "arw", "avif", "gif", "bmp", "jxl", "txt"] {
+        for extension in ["avif", "gif", "bmp", "jxl", "txt"] {
             assert!(!is_supported_extension(Path::new(&format!(
                 "photo.{extension}"
             ))));

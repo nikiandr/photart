@@ -3,12 +3,26 @@ import { useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { validateName } from "@/lib/names";
 import { cn } from "@/lib/utils";
+import type { ShootMedium, SourceMediumHint } from "@/types";
+import { ShootMediumFields } from "./ShootMediumFields";
+
+const hintText = {
+  checking: "Checking Source…",
+  noritsu: "Film detected",
+  possibleFilmRoll: "Possible film roll",
+  noneFound: "",
+  unavailable: "Source check unavailable",
+};
 
 export type ShootConfirmViewProps = {
   shootName: string;
-  sourcePath: string;
+  sourcePath: string | null;
   error: string | null;
+  medium: ShootMedium | null;
+  sourceHint: SourceMediumHint | "checking" | "unavailable";
   onShootNameChange: (value: string) => void;
+  onChooseSource: () => void;
+  onMediumChange: (medium: ShootMedium | null) => void;
   onCancel: () => void;
   onImport: () => void;
 };
@@ -17,7 +31,11 @@ export function ShootConfirmView({
   shootName,
   sourcePath,
   error,
+  medium,
+  sourceHint,
   onShootNameChange,
+  onChooseSource,
+  onMediumChange,
   onCancel,
   onImport,
 }: ShootConfirmViewProps) {
@@ -33,15 +51,17 @@ export function ShootConfirmView({
       return;
     }
     setNameError(null);
-    onImport();
+    if (sourcePath) {
+      onImport();
+    }
   }
 
   const inlineError = nameError ?? error;
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center px-8">
+    <div className="flex h-full w-full flex-col items-center overflow-y-auto px-8 py-6">
       <form
-        className="flex w-full max-w-md flex-col gap-6"
+        className="my-auto flex w-full max-w-md flex-col gap-6"
         onSubmit={handleSubmit}
         noValidate
       >
@@ -55,6 +75,20 @@ export function ShootConfirmView({
         </div>
 
         <div className="space-y-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-sans text-[0.8125rem] font-medium text-foreground">
+                Source
+              </p>
+              <Button type="button" variant="outline" size="sm" onClick={onChooseSource} autoFocus={!sourcePath}>
+                {sourcePath ? "Change folder…" : "Choose folder…"}
+              </Button>
+            </div>
+            <p className="break-all font-mono text-[0.8125rem] text-muted-foreground">
+              {sourcePath ?? "No folder selected"}
+            </p>
+          </div>
+
           <div className="space-y-2">
             <label
               htmlFor="shoot-name"
@@ -74,7 +108,6 @@ export function ShootConfirmView({
                 }
               }}
               aria-invalid={nameError ? true : undefined}
-              autoFocus
               className={cn(
                 "h-8 w-full border border-input bg-background px-2.5 font-sans text-[0.8125rem] text-foreground outline-none",
                 "focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50",
@@ -83,14 +116,11 @@ export function ShootConfirmView({
             />
           </div>
 
-          <div className="space-y-2">
-            <p className="font-sans text-[0.8125rem] font-medium text-foreground">
-              Source
-            </p>
-            <p className="break-all font-mono text-[0.8125rem] text-muted-foreground">
-              {sourcePath}
-            </p>
-          </div>
+          <ShootMediumFields
+            medium={medium}
+            onChange={onMediumChange}
+            status={hintText[sourceHint]}
+          />
 
           {inlineError ? (
             <p className="font-sans text-xs text-destructive" role="alert">
@@ -103,7 +133,7 @@ export function ShootConfirmView({
           <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="submit">Import photographs</Button>
+          <Button type="submit" disabled={!sourcePath}>Import photographs</Button>
         </div>
       </form>
     </div>

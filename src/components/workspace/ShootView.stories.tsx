@@ -33,6 +33,7 @@ const sampleShoot: ShootDetails = {
     importedAt: "2026-08-01T10:00:00Z",
     photographCount: 3,
     skippedFileCount: 2,
+    medium: null,
   },
   photographs: [
     photo("IMG_0101.jpg", 1200, 800, "#c4b5a0"),

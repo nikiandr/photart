@@ -25,7 +25,8 @@ import {
 } from "@/components/ui/dialog";
 import { validateName } from "@/lib/names";
 import { cn } from "@/lib/utils";
-import type { CatalogError, ShootSummary } from "@/types";
+import type { CatalogError, ShootMedium, ShootSummary } from "@/types";
+import { ShootMediumFields } from "./ShootMediumFields";
 
 export type SidebarActive = "home" | { shootName: string };
 
@@ -37,12 +38,12 @@ export type SidebarProps = {
   onHome: () => void;
   onCreateShoot: () => void;
   onSelectShoot: (name: string) => void;
-  onRenameShoot: (name: string, newName: string) => Promise<void>;
+  onUpdateShoot: (name: string, newName: string, medium: ShootMedium | null) => Promise<void>;
   onPurgeShoot: (name: string) => Promise<void>;
 };
 
 type ShootAction =
-  | { kind: "rename"; shoot: ShootSummary }
+  | { kind: "edit"; shoot: ShootSummary }
   | { kind: "purge"; shoot: ShootSummary };
 
 export function Sidebar({
@@ -53,18 +54,20 @@ export function Sidebar({
   onHome,
   onCreateShoot,
   onSelectShoot,
-  onRenameShoot,
+  onUpdateShoot,
   onPurgeShoot,
 }: SidebarProps) {
   const homeActive = active === "home";
   const [action, setAction] = useState<ShootAction | null>(null);
-  const [renameValue, setRenameValue] = useState("");
+  const [nameDraft, setNameDraft] = useState("");
+  const [mediumDraft, setMediumDraft] = useState<ShootMedium | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
 
   function beginAction(nextAction: ShootAction) {
     setAction(nextAction);
-    setRenameValue(nextAction.shoot.name);
+    setNameDraft(nextAction.shoot.name);
+    setMediumDraft(nextAction.shoot.medium);
     setActionError(null);
   }
 
@@ -75,19 +78,19 @@ export function Sidebar({
     }
   }
 
-  async function submitRename(event: FormEvent) {
+  async function submitEdit(event: FormEvent) {
     event.preventDefault();
-    if (action?.kind === "rename") {
-      const validationError = validateName(renameValue);
+    if (action?.kind === "edit") {
+      const validationError = validateName(nameDraft);
       if (validationError) {
         setActionError(validationError);
-      } else if (renameValue.trim() === action.shoot.name) {
+      } else if (nameDraft.trim() === action.shoot.name && mediumDraft === action.shoot.medium) {
         closeAction();
       } else {
         setWorking(true);
         setActionError(null);
         try {
-          await onRenameShoot(action.shoot.name, renameValue.trim());
+          await onUpdateShoot(action.shoot.name, nameDraft.trim(), mediumDraft);
           setAction(null);
         } catch (error) {
           setActionError((error as CatalogError).message);
@@ -206,11 +209,11 @@ export function Sidebar({
                       <ContextMenuContent>
                         <ContextMenuItem
                           onClick={() =>
-                            beginAction({ kind: "rename", shoot })
+                            beginAction({ kind: "edit", shoot })
                           }
                         >
                           <PencilSimple aria-hidden="true" />
-                          Rename Shoot
+                          Edit Shoot…
                         </ContextMenuItem>
                         <ContextMenuSeparator />
                         <ContextMenuItem
@@ -234,26 +237,26 @@ export function Sidebar({
 
       <Dialog open={action !== null} onOpenChange={(open) => !open && closeAction()}>
         <DialogContent showCloseButton={false}>
-          {action?.kind === "rename" ? (
-            <form className="contents" onSubmit={submitRename} noValidate>
+          {action?.kind === "edit" ? (
+            <form className="contents" onSubmit={submitEdit} noValidate>
               <DialogHeader>
-                <DialogTitle>Rename Shoot</DialogTitle>
+                <DialogTitle>Edit Shoot</DialogTitle>
                 <DialogDescription>
-                  Choose a name that will identify this Shoot in the Catalog.
+                  Change the name or medium of this Shoot.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-2">
                 <label
-                  htmlFor="rename-shoot"
+                  htmlFor="edit-shoot-name"
                   className="block font-sans text-[0.8125rem] font-medium text-foreground"
                 >
                   Shoot name
                 </label>
                 <input
-                  id="rename-shoot"
-                  value={renameValue}
+                  id="edit-shoot-name"
+                  value={nameDraft}
                   onChange={(event) => {
-                    setRenameValue(event.target.value);
+                    setNameDraft(event.target.value);
                     setActionError(null);
                   }}
                   disabled={working}
@@ -276,6 +279,11 @@ export function Sidebar({
                   </p>
                 ) : null}
               </div>
+              <ShootMediumFields
+                medium={mediumDraft}
+                onChange={setMediumDraft}
+                disabled={working}
+              />
               <DialogFooter>
                 <DialogClose
                   render={<Button variant="outline" />}
@@ -284,7 +292,7 @@ export function Sidebar({
                   Cancel
                 </DialogClose>
                 <Button type="submit" disabled={working}>
-                  {working ? "Renaming…" : "Rename Shoot"}
+                  {working ? "Applying…" : "Apply changes"}
                 </Button>
               </DialogFooter>
             </form>

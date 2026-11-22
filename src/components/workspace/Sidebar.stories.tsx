@@ -10,6 +10,7 @@ const sampleShoots: ShootSummary[] = [
     importedAt: "2026-08-01T10:00:00Z",
     photographCount: 128,
     skippedFileCount: 2,
+    medium: null,
   },
   {
     name: "Harbor Walk",
@@ -17,6 +18,7 @@ const sampleShoots: ShootSummary[] = [
     importedAt: "2026-08-01T14:00:00Z",
     photographCount: 54,
     skippedFileCount: 0,
+    medium: null,
   },
 ];
 
@@ -41,7 +43,7 @@ const meta = {
     onHome: () => undefined,
     onCreateShoot: () => undefined,
     onSelectShoot: () => undefined,
-    onRenameShoot: async () => undefined,
+    onUpdateShoot: async () => undefined,
     onPurgeShoot: async () => undefined,
   },
 } satisfies Meta<typeof Sidebar>;

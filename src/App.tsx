@@ -16,11 +16,12 @@ import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
 import {
   createCatalog,
   importShoot,
+  inspectSourceMedium,
   isConfigFatalError,
   loadCatalogState,
   loadShoot,
   purgeShoot,
-  renameShoot,
+  updateShoot,
 } from "@/lib/catalog";
 import { editionName } from "@/lib/edition";
 import { pathBasename } from "@/lib/names";
@@ -29,6 +30,8 @@ import type {
   CatalogSnapshot,
   ImportProgress,
   ShootDetails,
+  ShootMedium,
+  SourceMediumHint,
 } from "@/types";
 
 const DEFAULT_CATALOG_NAME = "Photart Catalog";
@@ -50,10 +53,13 @@ type AppView =
   | {
       kind: "confirm-shoot";
       catalog: CatalogSnapshot;
-      sourcePath: string;
+      sourcePath: string | null;
       shootName: string;
       error: string | null;
       previous: "home" | { shootName: string };
+      inspectionId: number;
+      sourceHint: SourceMediumHint | "checking" | "unavailable";
+      mediumOverride?: ShootMedium | null;
     }
   | {
       kind: "importing";
@@ -71,6 +77,12 @@ type AppView =
       skippedNoticeCount: number | null;
       loading?: boolean;
     };
+
+function draftMedium(draft: Extract<AppView, { kind: "confirm-shoot" }>): ShootMedium | null {
+  return draft.mediumOverride !== undefined
+    ? draft.mediumOverride
+    : draft.sourceHint === "noritsu" ? { kind: "film", filmStock: null } : null;
+}
 
 function upsertShoot(
   catalog: CatalogSnapshot,
@@ -112,6 +124,7 @@ function App() {
   const picturesDirectoryRef = useRef<string | null>(null);
   const importCancelRef = useRef<(() => Promise<void>) | null>(null);
   const shootRequestIdRef = useRef(0);
+  const inspectionIdRef = useRef(0);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-atmosphere", "gallery");
@@ -182,22 +195,58 @@ function App() {
     return typeof selected === "string" ? selected : selected[0] ?? null;
   }
 
-  async function beginCreateShoot(
+  function beginCreateShoot(
     catalog: CatalogSnapshot,
     previous: "home" | { shootName: string },
   ) {
-    const sourcePath = await pickDirectory();
-    if (!sourcePath) {
-      return;
-    }
+    shootRequestIdRef.current += 1;
     setView({
       kind: "confirm-shoot",
       catalog,
-      sourcePath,
-      shootName: pathBasename(sourcePath),
+      sourcePath: null,
+      shootName: "",
       error: null,
       previous,
+      inspectionId: ++inspectionIdRef.current,
+      sourceHint: "noneFound",
     });
+  }
+
+  async function chooseShootSource(draft: Extract<AppView, { kind: "confirm-shoot" }>) {
+    try {
+      const sourcePath = await pickDirectory();
+      if (sourcePath && sourcePath !== draft.sourcePath) {
+        const inspectionId = ++inspectionIdRef.current;
+        setView((current) => {
+          if (current.kind !== "confirm-shoot" || current.inspectionId !== draft.inspectionId) {
+            return current;
+          }
+          const previousDefault = current.sourcePath ? pathBasename(current.sourcePath) : "";
+          return {
+            ...current,
+            sourcePath,
+            shootName: !current.shootName.trim() || current.shootName === previousDefault
+              ? pathBasename(sourcePath)
+              : current.shootName,
+            error: null,
+            inspectionId,
+            sourceHint: "checking",
+          };
+        });
+        const sourceHint = await inspectSourceMedium(sourcePath).catch(() => "unavailable" as const);
+        setView((current) =>
+          current.kind === "confirm-shoot" && current.inspectionId === inspectionId
+            ? { ...current, sourceHint }
+            : current,
+        );
+      }
+    } catch {
+      setView((current) =>
+        current.kind === "confirm-shoot" && current.inspectionId === draft.inspectionId
+          ? { ...current, error: "Could not open the folder picker. Try again." }
+          : current,
+      );
+    }
   }
 
   async function openShoot(catalog: CatalogSnapshot, shootName: string) {
@@ -212,6 +261,7 @@ function App() {
           importedAt: "",
           photographCount: 0,
           skippedFileCount: 0,
+          medium: null,
         },
         photographs: [],
       },
@@ -239,12 +289,10 @@ function App() {
     }
   }
 
-  function startImport(args: {
-    catalog: CatalogSnapshot;
-    sourcePath: string;
-    shootName: string;
-    previous: "home" | { shootName: string };
-  }) {
+  function startImport(args: Extract<AppView, { kind: "confirm-shoot" }>) {
+    if (!args.sourcePath) {
+      return;
+    }
     const importId =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
@@ -270,6 +318,7 @@ function App() {
       {
         sourcePath: args.sourcePath,
         shootName,
+        medium: draftMedium(args),
       },
       (progress) => {
         setView((current) =>
@@ -309,18 +358,15 @@ function App() {
         }
 
         setView({
-          kind: "confirm-shoot",
-          catalog: args.catalog,
-          sourcePath: args.sourcePath,
-          shootName: args.shootName,
+          ...args,
+          sourceHint: args.sourceHint === "checking" ? "noneFound" : args.sourceHint,
           error: catalogError.message,
-          previous: args.previous,
         });
       });
   }
 
-  async function handleRenameShoot(shootName: string, newName: string) {
-    const renamed = await renameShoot(shootName, newName);
+  async function handleUpdateShoot(shootName: string, newName: string, medium: ShootMedium | null) {
+    const renamed = await updateShoot(shootName, newName, medium);
     shootRequestIdRef.current += 1;
 
     setView((current) => {
@@ -597,7 +643,7 @@ function App() {
               view.kind === "shoot"
                 ? { shootName: view.shoot.summary.name }
                 : "home";
-            void beginCreateShoot(catalog, previous);
+            beginCreateShoot(catalog, previous);
           }}
           onSelectShoot={(shootName) => {
             if (importing) {
@@ -605,14 +651,14 @@ function App() {
             }
             void openShoot(catalog, shootName);
           }}
-          onRenameShoot={handleRenameShoot}
+          onUpdateShoot={handleUpdateShoot}
           onPurgeShoot={handlePurgeShoot}
         />
       }
     >
       {view.kind === "home" ? (
         <HomeView
-          onCreateShoot={() => void beginCreateShoot(view.catalog, "home")}
+          onCreateShoot={() => beginCreateShoot(view.catalog, "home")}
         />
       ) : null}
 
@@ -620,9 +666,19 @@ function App() {
         <ShootConfirmView
           shootName={view.shootName}
           sourcePath={view.sourcePath}
+          onChooseSource={() => void chooseShootSource(view)}
           error={view.error}
+          medium={draftMedium(view)}
+          sourceHint={view.mediumOverride === undefined ? view.sourceHint : "noneFound"}
+          onMediumChange={(mediumOverride) =>
+            setView((current) => current.kind === "confirm-shoot" && current.inspectionId === view.inspectionId
+              ? { ...current, mediumOverride }
+              : current)
+          }
           onShootNameChange={(shootName) =>
-            setView({ ...view, shootName, error: null })
+            setView((current) => current.kind === "confirm-shoot" && current.inspectionId === view.inspectionId
+              ? { ...current, shootName, error: null }
+              : current)
           }
           onCancel={() => {
             if (view.previous === "home") {
@@ -631,14 +687,7 @@ function App() {
             }
             void openShoot(view.catalog, view.previous.shootName);
           }}
-          onImport={() =>
-            startImport({
-              catalog: view.catalog,
-              sourcePath: view.sourcePath,
-              shootName: view.shootName,
-              previous: view.previous,
-            })
-          }
+          onImport={() => startImport(view)}
         />
       ) : null}
 

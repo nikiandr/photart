@@ -30,6 +30,9 @@ fn build_libraw() {
         .expect("find upstream LibRaw source list")
         .0;
     let mut compiler = cc::Build::new();
+    if env::var("OPT_LEVEL").as_deref() == Ok("0") {
+        compiler.opt_level(2);
+    }
     compiler
         .cpp(true)
         .std("c++17")

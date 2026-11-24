@@ -95,6 +95,22 @@ export function loadPhotographCapture(
   return invoke("get_photograph_capture", { shootName, relativePath });
 }
 
+export async function setJpegCompanionLink(
+  shootName: string,
+  rawPath: string,
+  linked: boolean,
+): Promise<ShootDetails> {
+  try {
+    return withAssetUrls(await invoke<RawShootDetails>("set_jpeg_companion_link", {
+      shootName,
+      rawPath,
+      linked,
+    }));
+  } catch (error) {
+    throw normalizeError(error);
+  }
+}
+
 export async function loadPhotographDetail(shootName: string, relativePath: string): Promise<string> {
   const path = await invoke<string>("get_photograph_detail", { shootName, relativePath });
   return convertFileSrc(path);

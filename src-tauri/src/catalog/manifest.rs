@@ -1,8 +1,11 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::image_processing;
 
 use super::error::CatalogError;
 use super::paths::{self, validate_relative_path};
@@ -38,6 +41,31 @@ pub struct PhotographRecord {
     pub width: u32,
     pub height: u32,
     pub thumbnail_relative_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jpeg_companion: Option<JpegCompanion>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JpegCompanion {
+    pub relative_path: String,
+    pub linked: bool,
+}
+
+impl ShootRecord {
+    pub fn refresh_photograph_count(&mut self) {
+        let linked_count = self
+            .photographs
+            .iter()
+            .filter(|photo| {
+                photo
+                    .jpeg_companion
+                    .as_ref()
+                    .is_some_and(|companion| companion.linked)
+            })
+            .count();
+        self.photograph_count = (self.photographs.len() - linked_count) as u32;
+    }
 }
 
 impl CatalogManifest {
@@ -105,6 +133,12 @@ fn validate_shoot_record(shoot: &ShootRecord, catalog_path: &Path) -> Result<(),
         ));
     }
 
+    let mut companion_paths = HashSet::new();
+    let photograph_paths: HashSet<_> = shoot
+        .photographs
+        .iter()
+        .map(|photograph| photograph.relative_path.as_str())
+        .collect();
     for photograph in &shoot.photographs {
         let photo_rel = validate_relative_path(&photograph.relative_path)?;
         let joined = format!("{relative_path}/{photo_rel}");
@@ -112,6 +146,23 @@ fn validate_shoot_record(shoot: &ShootRecord, catalog_path: &Path) -> Result<(),
 
         let thumb = validate_relative_path(&photograph.thumbnail_relative_path)?;
         ensure_resolves_inside(catalog_path, &thumb)?;
+
+        if let Some(companion) = &photograph.jpeg_companion {
+            let raw = Path::new(&photograph.relative_path);
+            let jpeg = Path::new(&companion.relative_path);
+            if !image_processing::is_raw(raw)
+                || !image_processing::is_jpeg(jpeg)
+                || raw.parent() != jpeg.parent()
+                || raw.file_stem() != jpeg.file_stem()
+                || !photograph_paths.contains(companion.relative_path.as_str())
+                || !companion_paths.insert(companion.relative_path.as_str())
+            {
+                return Err(CatalogError::new(
+                    "manifest_invalid",
+                    "Invalid RAW + JPEG pair.",
+                ));
+            }
+        }
 
         if photograph.file_name.trim().is_empty() {
             return Err(CatalogError::new(

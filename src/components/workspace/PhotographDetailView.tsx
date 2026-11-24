@@ -12,6 +12,12 @@ export type PhotographDetailViewProps = {
   shootName: string;
   photographs: PhotographEntry[];
   activeIndex: number;
+  jpegCompanion?: PhotographEntry;
+  showJpeg: boolean;
+  onShowJpeg: (showJpeg: boolean) => void;
+  onTogglePairLink?: () => void;
+  pairBusy: boolean;
+  pairError: boolean;
   direction: -1 | 1;
   openedAt: number | null;
   onOpenPhotograph: (relativePath: string, direction: -1 | 1) => void;
@@ -35,29 +41,38 @@ export function PhotographDetailView({
   shootName,
   photographs,
   activeIndex,
+  jpegCompanion,
+  showJpeg,
+  onShowJpeg,
+  onTogglePairLink,
+  pairBusy,
+  pairError,
   direction,
   openedAt,
   onOpenPhotograph,
   onClose,
   loadCapture,
 }: PhotographDetailViewProps) {
-  const active = photographs[activeIndex];
+  const primary = photographs[activeIndex];
   const previous = photographs[activeIndex - 1];
   const next = photographs[activeIndex + 1];
   const backButton = useRef<HTMLButtonElement>(null);
   const filmstrip = useRef<HTMLUListElement>(null);
   const activeThumbnail = useRef<HTMLButtonElement>(null);
-  const capture = usePhotographCapture(
-    loadCapture,
-    shootName,
-    active.relativePath,
-    active.originalAvailable,
-  );
   const [displayLoads, setDisplayLoads] = useState(() => new Map<string, DisplayStatus>());
   const [timing, setTiming] = useState<{ openedAt: number; milliseconds: number }>();
   const [detail, setDetail] = useState<{ path: string; openedAt: number | null; url: string | null }>();
+  const [failedThumbnailPath, setFailedThumbnailPath] = useState<string>();
   const loadingDetail = useRef(false);
+  const rawDetailFailed = (detail?.path === primary.relativePath && detail.openedAt === openedAt && detail.url === null)
+    || displayLoads.get(primary.relativePath) === "unavailable";
+  const fallbackToJpeg = !showJpeg && jpegCompanion?.originalAvailable === true && (
+    !primary.originalAvailable || (failedThumbnailPath === primary.relativePath && rawDetailFailed)
+  );
+  const active = (showJpeg || fallbackToJpeg ? jpegCompanion : undefined) ?? primary;
+  const showingJpeg = active === jpegCompanion;
   const activePath = active.relativePath;
+  const capture = usePhotographCapture(loadCapture, shootName, activePath, active.originalAvailable);
   const needsDetail = active.usesDetailCache && active.originalAvailable;
   const resolved = detail?.path === activePath && detail.openedAt === openedAt;
   const activeUrl = needsDetail ? (resolved ? detail.url : null) : active.displayUrl;
@@ -228,6 +243,7 @@ export function PhotographDetailView({
               key={`thumbnail:${active.relativePath}`}
               src={active.thumbnailUrl}
               alt={sharp ? "" : active.fileName}
+              onError={() => setFailedThumbnailPath(activePath)}
               className={`block size-full object-contain${sharp ? " invisible" : ""}`}
             />
             {displayImages.map((photo) => {
@@ -251,6 +267,19 @@ export function PhotographDetailView({
         </div>
         <aside aria-label="Photograph details" className="w-[36%] max-w-64 shrink-0 overflow-y-auto border-l border-border p-3">
           <h2 className="font-mono text-sm font-medium wrap-anywhere">{active.fileName}</h2>
+          {jpegCompanion ? (
+            <div role="group" aria-label="Original format" className="mt-3 flex flex-wrap gap-1">
+              <Button size="sm" variant="outline" aria-pressed={!showingJpeg} disabled={fallbackToJpeg}
+                className="font-mono aria-pressed:bg-muted" onClick={() => onShowJpeg(false)}>
+                RAW
+              </Button>
+              <Button size="sm" variant="outline" aria-pressed={showingJpeg}
+                className="font-mono aria-pressed:bg-muted" onClick={() => onShowJpeg(true)}>
+                JPEG
+              </Button>
+            </div>
+          ) : null}
+          {fallbackToJpeg ? <p role="status" className="mt-2 text-xs text-muted-foreground">RAW unavailable. Showing JPEG.</p> : null}
           <dl className="mt-3">
             {rows.map(([label, value]) => value != null ? (
               <div key={label} className="border-t border-border py-2 text-xs">
@@ -274,6 +303,12 @@ export function PhotographDetailView({
               Detail image unavailable.
             </p>
           ) : null}
+          {onTogglePairLink ? (
+            <Button size="sm" variant="ghost" className="mt-3" disabled={pairBusy} onClick={onTogglePairLink}>
+              {jpegCompanion ? "Unlink pair" : "Relink RAW + JPEG"}
+            </Button>
+          ) : null}
+          {pairError ? <p role="alert" className="mt-2 text-xs">Could not update the RAW + JPEG pair.</p> : null}
         </aside>
       </div>
 

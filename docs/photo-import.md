@@ -9,6 +9,9 @@
 | `.tif`, `.tiff` | The first page of a classic TIFF or BigTIFF, with TIFF orientation applied. Common grayscale, RGB(A), and 16-bit RGB TIFFs work; decoding is limited to the colors and compressions implemented by the `image` TIFF adapter and `tiff` crate. Not all TIFF variants work (for example, the adapter does not handle palette TIFF). Multipage files are not split into separate photographs. |
 | `.cr2`, `.cr3`, `.nef`, `.arw`, `.raf`, `.dng` | An embedded JPEG if usable, otherwise a display JPEG rendered from the RAW pixels. Camera model and capture mode affect compatibility; the extension alone does not guarantee support. |
 
+Matching RAW and camera JPEG originals can appear as one photograph in Gallery.
+See [RAW + JPEG in Photart](design/raw-jpeg-pairing.md) for pairing and navigation.
+
 Import checks the content as well as the extension. TIFF's container is also
 used by some camera RAW files: Photart rejects DNG version tags, CFA tags,
 raw photometric interpretations, and the Canon CR2 header rather than

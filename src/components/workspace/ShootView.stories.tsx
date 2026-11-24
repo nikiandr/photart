@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect } from "storybook/test";
 
 import { ShootView } from "./ShootView";
-import type { PhotographEntry, ShootDetails } from "@/types";
+import type { PhotographCapture, PhotographEntry, ShootDetails } from "@/types";
 
 function placeholderUrl(width: number, height: number, color: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="${color}"/></svg>`;
@@ -61,7 +62,7 @@ const meta = {
     shoot: sampleShoot,
     skippedNoticeCount: null,
     loading: false,
-    loadCapture: async (_shootName, relativePath) => {
+    loadCapture: async (_shootName, relativePath): Promise<PhotographCapture> => {
       const photograph = sampleShoot.photographs.find((photo) => photo.relativePath === relativePath);
       if (!photograph) throw new Error("Photograph is unavailable.");
       return {
@@ -84,6 +85,64 @@ export const Default: Story = {};
 export const PhotographDetail: Story = {
   play: async ({ canvas, userEvent }) => {
     await userEvent.click(await canvas.findByRole("button", { name: "IMG_0101.jpg" }));
+  },
+};
+
+export const RawJpegNavigation: Story = {
+  args: {
+    shoot: {
+      summary: { ...sampleShoot.summary, skippedFileCount: 0 },
+      photographs: [
+        { ...photo("IMG_0101.DNG", 1200, 800, "#ad9b86"), jpegCompanionPath: "photographs/IMG_0101.jpg" },
+        sampleShoot.photographs[0],
+        { ...photo("IMG_0102.NEF", 800, 1200, "#7f9180"), jpegCompanionPath: "photographs/IMG_0102.jpg" },
+        sampleShoot.photographs[1],
+        sampleShoot.photographs[2],
+      ],
+    },
+    loadCapture: async () => ({ camera: null, lens: null, capturedAt: null, aperture: null, shutterSpeed: null, iso: null }),
+  },
+  play: async ({ canvas, userEvent }) => {
+    const toggle = await canvas.findByRole("button", { name: "RAW + JPEG: IMG_0101.DNG" });
+    await expect(canvas.queryByRole("button", { name: /^IMG_0101\.jpg$/ })).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    await userEvent.click(await canvas.findByRole("button", { name: /^IMG_0101\.jpg$/ }));
+    await expect(canvas.getByRole("button", { name: /^JPEG$/ })).toHaveAttribute("aria-pressed", "true");
+    await expect(canvas.getByText("1 / 3")).toBeVisible();
+
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(canvas.getByRole("heading", { name: "IMG_0102.NEF" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: /^JPEG$/ }));
+    await expect(canvas.getByRole("heading", { name: "IMG_0102.jpg" })).toBeVisible();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Next photograph" }));
+    await expect(canvas.getByRole("heading", { name: "IMG_0103.jpg" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Previous photograph" }));
+    await expect(canvas.getByRole("heading", { name: "IMG_0102.NEF" })).toBeVisible();
+    await userEvent.keyboard("{ArrowLeft}");
+    await expect(canvas.getByRole("heading", { name: "IMG_0101.DNG" })).toBeVisible();
+  },
+};
+
+export const MissingRawPreview: Story = {
+  args: {
+    shoot: {
+      summary: { ...sampleShoot.summary, photographCount: 1, skippedFileCount: 0 },
+      photographs: [
+        {
+          ...photo("IMG_0101.DNG", 1200, 800, "#ad9b86"),
+          jpegCompanionPath: "photographs/IMG_0101.jpg",
+          originalAvailable: false,
+          displayUrl: null,
+        },
+        sampleShoot.photographs[0],
+      ],
+    },
+  },
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByRole("button", { name: /^IMG_0101\.DNG$/ }));
+    await expect(canvas.getByRole("heading", { name: "IMG_0101.jpg" })).toBeVisible();
+    await expect(canvas.getByText("RAW unavailable. Showing JPEG.")).toBeVisible();
   },
 };
 

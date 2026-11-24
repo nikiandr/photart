@@ -45,8 +45,8 @@ function presentProgress(progress: ImportProgress | null): ProgressPresentation 
       const total = progress.total ?? 0;
       if (total > 0) {
         return {
-          label: "Copying photographs…",
-          detail: `Copied ${prepared} of ${total}`,
+          label: "Importing photographs",
+          detail: `${prepared} of ${total}`,
           indeterminate: false,
           value: prepared,
           max: total,
@@ -89,6 +89,13 @@ export function ImportProgressView({
   onCancel,
 }: ImportProgressViewProps) {
   const presentation = presentProgress(progress);
+  const remaining = progress?.phase === "preparing" ? progress.remainingSeconds : null;
+  const timeLeft = remaining == null ? null : remaining < 10
+    ? "less than 10 seconds left"
+    : remaining < 60
+      ? `about ${Math.ceil(remaining / 5) * 5} seconds left`
+      : `about ${Math.round(remaining / 60)} ${Math.round(remaining / 60) === 1 ? "minute" : "minutes"} left`;
+  const showCount = progress?.phase === "preparing" && !presentation.indeterminate;
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-8">
@@ -98,10 +105,10 @@ export function ImportProgressView({
         aria-busy="true"
       >
         <div className="space-y-2">
-          <h1 className="font-editorial text-3xl font-medium tracking-tight text-foreground">
-            Importing
-          </h1>
           <p className="font-sans text-sm text-muted-foreground">{shootName}</p>
+          <h1 className="font-editorial text-3xl font-medium tracking-tight text-foreground">
+            Importing photographs
+          </h1>
         </div>
 
         <div className="flex w-full flex-col items-center gap-3">
@@ -134,12 +141,14 @@ export function ImportProgressView({
           )}
 
           <div className="space-y-1" role="status">
-            <p className="font-sans text-sm font-medium text-foreground">
-              {presentation.label}
-            </p>
+            {!showCount ? (
+              <p className="font-sans text-sm font-medium text-foreground">
+                {presentation.label}
+              </p>
+            ) : null}
             {presentation.detail ? (
-              <p className="font-mono text-[0.8125rem] text-muted-foreground">
-                {presentation.detail}
+              <p className="font-mono text-[0.8125rem] tabular-nums text-muted-foreground">
+                {presentation.detail}{timeLeft ? ` (${timeLeft})` : ""}
               </p>
             ) : null}
           </div>

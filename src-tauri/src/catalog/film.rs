@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 use exif::{Exif, In, Reader, Tag, Value};
 use serde::Serialize;
 
-use super::{import::scan_source, CatalogError};
+use super::{diagnostics::timed, import::scan_source, CatalogError};
 
 const MAX_SAMPLES: usize = 24;
 const MIN_ROLL_SAMPLES: usize = 5;
@@ -21,7 +21,16 @@ pub enum SourceMediumHint {
 }
 
 pub fn inspect_source_medium(source: &Path) -> Result<SourceMediumHint, CatalogError> {
-    let scan = scan_source(source, &AtomicBool::new(false))?;
+    if cfg!(debug_assertions) {
+        eprintln!("[photart-import] Source check started (before Import)");
+    }
+    timed("Source check total", || inspect_source(source))
+}
+
+fn inspect_source(source: &Path) -> Result<SourceMediumHint, CatalogError> {
+    let scan = timed("Source check: folder scan", || {
+        scan_source(source, &AtomicBool::new(false))
+    })?;
     let candidates: Vec<_> = scan
         .candidates
         .iter()
@@ -32,6 +41,12 @@ pub fn inspect_source_medium(source: &Path) -> Result<SourceMediumHint, CatalogE
                 .is_some_and(|name| name.to_string_lossy().starts_with("._"))
         })
         .collect();
+    Ok(timed("Source check: film detection", || {
+        detect_medium(source, &candidates)
+    }))
+}
+
+fn detect_medium(source: &Path, candidates: &[&Path]) -> SourceMediumHint {
     let sample_count = candidates.len().min(MAX_SAMPLES);
     let mut all_noritsu = sample_count > 0;
     let mut consistent_roll = sample_count >= MIN_ROLL_SAMPLES;
@@ -61,13 +76,13 @@ pub fn inspect_source_medium(source: &Path) -> Result<SourceMediumHint, CatalogE
         }
     }
 
-    Ok(if all_noritsu {
+    if all_noritsu {
         SourceMediumHint::Noritsu
     } else if consistent_roll {
         SourceMediumHint::PossibleFilmRoll
     } else {
         SourceMediumHint::NoneFound
-    })
+    }
 }
 
 fn is_noritsu(path: &Path) -> bool {

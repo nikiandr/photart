@@ -1,15 +1,20 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use chrono::{SecondsFormat, Utc};
 use rayon::prelude::*;
 
-use crate::image_processing::{self, prepare_photograph};
+use crate::file_timing::{measure, FileTiming};
+use crate::image_processing::{self, prepare_thumbnail, CaptureDetails};
 
+use super::detail::lock_detail_cache;
+use super::diagnostics::{timed, WorkerTiming};
 use super::error::CatalogError;
-use super::manifest::{self, PhotographRecord, ShootRecord};
+use super::manifest::{self, JpegCompanion, PhotographRecord, ShootRecord};
 use super::names::validate_single_path_component_name;
 use super::paths::{self, normalize_relative_path, thumbnail_file_name};
 use super::state::shoot_details_from_record;
@@ -133,15 +138,20 @@ pub fn import_shoot(
     mut progress: impl FnMut(ImportProgress),
     cancel: &AtomicBool,
 ) -> Result<ImportShootResult, CatalogError> {
-    import_shoot_inner(
-        catalog_path,
-        source_path,
-        shoot_name,
-        medium,
-        &mut progress,
-        cancel,
-        &ImportFaults::default(),
-    )
+    if cfg!(debug_assertions) {
+        eprintln!("[photart-import] Import started");
+    }
+    timed("Import total", || {
+        import_shoot_inner(
+            catalog_path,
+            source_path,
+            shoot_name,
+            medium,
+            &mut progress,
+            cancel,
+            &ImportFaults::default(),
+        )
+    })
 }
 
 pub(crate) fn import_shoot_inner(
@@ -200,7 +210,7 @@ pub(crate) fn import_shoot_inner(
         ));
     }
 
-    let mut manifest = manifest::read_manifest(&catalog_path)?;
+    let manifest = manifest::read_manifest(&catalog_path)?;
     if manifest.shoots.iter().any(|shoot| shoot.name == shoot_name) {
         return Err(CatalogError::new(
             "shoot_exists",
@@ -254,33 +264,47 @@ pub(crate) fn import_shoot_inner(
             phase: "scanning".into(),
             total: None,
             prepared: None,
+            remaining_seconds: None,
         });
 
-        let scan = scan_source(&source_path, cancel)?;
+        let scan = timed("Import: folder scan", || scan_source(&source_path, cancel))?;
         check_cancel(cancel)?;
+        let pairs = candidate_pairs(&scan.candidates);
+        let paired_paths = pairs.iter().flat_map(|(&raw, &jpeg)| [raw, jpeg]).collect();
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[photart-import] Import: preparing {} files ({} possible RAW + JPEG pairs)",
+                scan.candidates.len(),
+                pairs.len()
+            );
+        }
 
         progress(ImportProgress {
             phase: "preparing".into(),
             total: Some(scan.candidates.len() as u32),
             prepared: Some(0),
+            remaining_seconds: None,
         });
 
         // Single-pass ingest: read each source file once, build the thumbnail,
         // and write the original bytes to staging (no second source read).
         // Because copying is no longer a separate pass, "preparing" is the only
         // per-photograph phase the UI reports.
-        let prepared = ingest_candidates(
-            &IngestContext {
-                source_path: &source_path,
-                staging_shoot: &staging_shoot,
-                staging_thumbnails: &staging_thumbnails,
-                shoot_name: &shoot_name,
-            },
-            &scan.candidates,
-            progress,
-            cancel,
-            faults,
-        )?;
+        let prepared = timed("Import: prepare and copy", || {
+            ingest_candidates(
+                &IngestContext {
+                    source_path: &source_path,
+                    staging_shoot: &staging_shoot,
+                    staging_thumbnails: &staging_thumbnails,
+                    shoot_name: &shoot_name,
+                    paired_paths: &paired_paths,
+                },
+                &scan.candidates,
+                progress,
+                cancel,
+                faults,
+            )
+        })?;
 
         if prepared.is_empty() {
             return Err(CatalogError::new(
@@ -294,10 +318,24 @@ pub(crate) fn import_shoot_inner(
             phase: "finalizing".into(),
             total: Some(total),
             prepared: Some(total),
+            remaining_seconds: None,
         });
 
+        let _cache = timed("Import: wait for catalog lock", lock_detail_cache)?;
+        check_cancel(cancel)?;
+        let mut manifest = manifest::read_manifest(&catalog_path)?;
+        if manifest.shoots.iter().any(|shoot| shoot.name == shoot_name) {
+            return Err(CatalogError::new(
+                "shoot_exists",
+                format!("A Shoot named \"{shoot_name}\" already exists in the Catalog."),
+            ));
+        }
+
         // Commit: move staged originals and thumbnails into place, then update manifest.
-        move_dir(&staging_shoot, &destination_shoot).map_err(|error| {
+        timed("Import: commit originals", || {
+            move_dir(&staging_shoot, &destination_shoot)
+        })
+        .map_err(|error| {
             CatalogError::new(
                 "import_commit",
                 format!(
@@ -321,7 +359,10 @@ pub(crate) fn import_shoot_inner(
                 )
             })?;
         }
-        move_dir(&staging_thumbnails, &final_thumbnails).map_err(|error| {
+        timed("Import: commit thumbnails", || {
+            move_dir(&staging_thumbnails, &final_thumbnails)
+        })
+        .map_err(|error| {
             CatalogError::new(
                 "import_commit",
                 format!(
@@ -343,6 +384,14 @@ pub(crate) fn import_shoot_inner(
             ));
         }
 
+        let captures: HashMap<_, _> = prepared
+            .iter()
+            .filter_map(|item| {
+                item.capture
+                    .as_ref()
+                    .map(|capture| (item.relative_path.as_str(), capture))
+            })
+            .collect();
         let mut photographs: Vec<PhotographRecord> = prepared
             .iter()
             .map(|item| PhotographRecord {
@@ -351,30 +400,45 @@ pub(crate) fn import_shoot_inner(
                 width: item.width,
                 height: item.height,
                 thumbnail_relative_path: item.thumbnail_relative_path.clone(),
+                jpeg_companion: pairs
+                    .get(item.relative_path.as_str())
+                    .and_then(|&jpeg_path| {
+                        let raw_capture = item.capture.as_ref()?;
+                        let jpeg_capture = captures.get(jpeg_path)?;
+                        (!raw_capture.conflicts_with(jpeg_capture)).then(|| JpegCompanion {
+                            relative_path: jpeg_path.to_owned(),
+                            linked: true,
+                        })
+                    }),
             })
             .collect();
         photographs.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
-        let shoot_record = ShootRecord {
+        let mut shoot_record = ShootRecord {
             name: shoot_name.clone(),
             relative_path: shoot_name.clone(),
             imported_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-            photograph_count: photographs.len() as u32,
+            photograph_count: 0,
             skipped_file_count: scan.skipped_file_count + prepared_skip_count(&scan, &prepared),
             medium: medium.map(ShootMedium::normalized),
             photographs,
         };
+        shoot_record.refresh_photograph_count();
 
         // Prepend so manifest order is newest-first.
         manifest.shoots.insert(0, shoot_record.clone());
-        manifest::write_manifest(&catalog_path, &manifest)?;
+        timed("Import: save catalog manifest", || {
+            manifest::write_manifest(&catalog_path, &manifest)
+        })?;
 
         // Success: clear rollback targets.
         rollback.visible_shoot = None;
         rollback.visible_thumbnails = None;
 
         Ok(ImportShootResult {
-            shoot: shoot_details_from_record(&catalog_path, &shoot_record)?,
+            shoot: timed("Import: load Gallery entries", || {
+                shoot_details_from_record(&catalog_path, &shoot_record)
+            })?,
             skipped_file_count: shoot_record.skipped_file_count,
         })
     })();
@@ -542,12 +606,43 @@ fn walk_source(
     Ok(())
 }
 
+fn candidate_pairs(candidates: &[String]) -> HashMap<&str, &str> {
+    let mut groups = HashMap::<_, Vec<&Path>>::new();
+    for candidate in candidates {
+        let path = Path::new(candidate);
+        if image_processing::is_raw(path) || image_processing::is_jpeg(path) {
+            groups
+                .entry((path.parent(), path.file_stem()))
+                .or_default()
+                .push(path);
+        }
+    }
+
+    groups
+        .into_values()
+        .filter_map(|group| match group.as_slice() {
+            [first, second]
+                if image_processing::is_raw(first) && image_processing::is_jpeg(second) =>
+            {
+                Some((first.to_str()?, second.to_str()?))
+            }
+            [first, second]
+                if image_processing::is_jpeg(first) && image_processing::is_raw(second) =>
+            {
+                Some((second.to_str()?, first.to_str()?))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 struct PreparedItem {
     relative_path: String,
     file_name: String,
     width: u32,
     height: u32,
     thumbnail_relative_path: String,
+    capture: Option<CaptureDetails>,
 }
 
 enum IngestWorkerResult {
@@ -563,6 +658,7 @@ struct IngestContext<'a> {
     staging_shoot: &'a Path,
     staging_thumbnails: &'a Path,
     shoot_name: &'a str,
+    paired_paths: &'a HashSet<&'a str>,
 }
 
 fn ingest_chunk_size() -> usize {
@@ -597,130 +693,206 @@ fn ingest_candidates(
     let prepared_slots = AtomicU32::new(0);
     let copied_slots = AtomicU32::new(0);
     let mut prepared = Vec::with_capacity(candidates.len());
+    let read_time = WorkerTiming::default();
+    let preview_time = WorkerTiming::default();
+    let write_time = WorkerTiming::default();
+    let metadata_time = WorkerTiming::default();
+    let verbose =
+        cfg!(debug_assertions) && std::env::var("PHOTART_IMPORT_VERBOSE").as_deref() == Ok("1");
+    let started = Instant::now();
 
-    for chunk in candidates.chunks(chunk_size) {
+    for (index, chunk) in candidates.chunks(chunk_size).enumerate() {
         check_cancel(cancel)?;
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "\n[photart-import] Batch {}/{} · file timings in seconds",
+                index + 1,
+                candidates.len().div_ceil(chunk_size)
+            );
+            FileTiming::print_header();
+        }
 
-        let results: Vec<IngestWorkerResult> = chunk
-            .par_iter()
-            .map(|relative| {
-                if cancel.load(Ordering::SeqCst) {
-                    return IngestWorkerResult::Failed(CatalogError::new(
-                        "import_cancelled",
-                        "Shoot import was cancelled.",
-                    ));
-                }
+        let results: Vec<IngestWorkerResult> = timed("Import: process file batch", || {
+            chunk
+                .par_iter()
+                .enumerate()
+                .map(|(offset, relative)| {
+                    let timing = FileTiming::start();
+                    let result = (|| {
+                        if cancel.load(Ordering::SeqCst) {
+                            return IngestWorkerResult::Failed(CatalogError::new(
+                                "import_cancelled",
+                                "Shoot import was cancelled.",
+                            ));
+                        }
 
-                if let Some(limit) = faults.fail_after_prepared {
-                    let slot = prepared_slots.fetch_add(1, Ordering::SeqCst);
-                    if slot >= limit {
-                        return IngestWorkerResult::Failed(CatalogError::new(
-                            "import_fault",
-                            "Injected failure during prepare.",
-                        ));
+                        if let Some(limit) = faults.fail_after_prepared {
+                            let slot = prepared_slots.fetch_add(1, Ordering::SeqCst);
+                            if slot >= limit {
+                                return IngestWorkerResult::Failed(CatalogError::new(
+                                    "import_fault",
+                                    "Injected failure during prepare.",
+                                ));
+                            }
+                        }
+
+                        let source_absolute = ctx.source_path.join(Path::new(relative));
+                        let bytes = match read_time.measure(|| {
+                            measure(timing.as_ref(), "source read", || {
+                                image_processing::read_source(&source_absolute)
+                            })
+                        }) {
+                            Ok(bytes) => bytes,
+                            Err(_) => return IngestWorkerResult::Skipped,
+                        };
+
+                        let photograph = match preview_time.measure(|| {
+                            prepare_thumbnail(&source_absolute, &bytes, timing.as_ref())
+                        }) {
+                            Ok(photograph) => photograph,
+                            Err(_) => return IngestWorkerResult::Skipped,
+                        };
+
+                        let thumb_name = thumbnail_file_name(relative);
+                        let thumb_staging_path = ctx.staging_thumbnails.join(&thumb_name);
+                        if let Err(error) = write_time.measure(|| {
+                            measure(timing.as_ref(), "thumbnail write", || {
+                                fs::write(&thumb_staging_path, &photograph.thumbnail_jpeg)
+                            })
+                        }) {
+                            return IngestWorkerResult::Failed(CatalogError::new(
+                                "thumbnail_write",
+                                format!(
+                                    "Could not write staged thumbnail at {}: {error}",
+                                    thumb_staging_path.display()
+                                ),
+                            ));
+                        }
+
+                        if let Some(limit) = faults.fail_after_copied {
+                            let slot = copied_slots.fetch_add(1, Ordering::SeqCst);
+                            if slot >= limit {
+                                return IngestWorkerResult::Failed(CatalogError::new(
+                                    "import_fault",
+                                    "Injected failure during copy.",
+                                ));
+                            }
+                        }
+
+                        let destination = ctx.staging_shoot.join(Path::new(relative));
+                        // Created lazily, per photograph that actually survived prepare, so
+                        // a source folder whose files all skipped never reaches the Catalog
+                        // as an empty directory. `create_dir_all` tolerates the races
+                        // between workers sharing a parent.
+                        if let Some(parent) = destination.parent() {
+                            if let Err(error) = write_time.measure(|| {
+                                measure(timing.as_ref(), "staging directory", || {
+                                    fs::create_dir_all(parent)
+                                })
+                            }) {
+                                return IngestWorkerResult::Failed(CatalogError::new(
+                                    "import_copy",
+                                    format!(
+                                        "Could not create destination folder at {}: {error}",
+                                        parent.display()
+                                    ),
+                                ));
+                            }
+                        }
+
+                        // Exact original-byte write from the in-memory read (no second source I/O).
+                        if let Err(error) = write_time.measure(|| {
+                            measure(timing.as_ref(), "original write", || {
+                                fs::write(&destination, &bytes)
+                            })
+                        }) {
+                            return IngestWorkerResult::Failed(CatalogError::new(
+                                "import_copy",
+                                format!(
+                                    "Could not write {} to {}: {error}",
+                                    source_absolute.display(),
+                                    destination.display()
+                                ),
+                            ));
+                        }
+
+                        let file_name = Path::new(relative)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or(relative)
+                            .to_string();
+
+                        let thumbnail_relative_path = format!(
+                            "{}/{}/{}/{}",
+                            paths::PHOTART_DIR,
+                            paths::THUMBNAILS_DIR,
+                            ctx.shoot_name,
+                            thumb_name
+                        );
+
+                        IngestWorkerResult::Ready(PreparedItem {
+                            relative_path: relative.clone(),
+                            file_name,
+                            width: photograph.width,
+                            height: photograph.height,
+                            thumbnail_relative_path,
+                            capture: ctx.paired_paths.contains(relative.as_str()).then(|| {
+                                metadata_time.measure(|| {
+                                    measure(timing.as_ref(), "pairing metadata", || {
+                                        image_processing::pairing_capture(&source_absolute, &bytes)
+                                    })
+                                })
+                            }),
+                        })
+                    })();
+                    if let Some(timing) = timing {
+                        let extension = Path::new(relative)
+                            .extension()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("unknown");
+                        let outcome = match &result {
+                            IngestWorkerResult::Ready(_) => "prepared",
+                            IngestWorkerResult::Skipped => "skipped",
+                            IngestWorkerResult::Failed(_) => "failed",
+                        };
+                        timing.report(index * chunk_size + offset + 1, extension, outcome, verbose);
                     }
-                }
-
-                let source_absolute = ctx.source_path.join(Path::new(relative));
-                let bytes = match image_processing::read_source(&source_absolute) {
-                    Ok(bytes) => bytes,
-                    Err(_) => return IngestWorkerResult::Skipped,
-                };
-
-                let photograph = match prepare_photograph(&source_absolute, &bytes) {
-                    Ok(photograph) => photograph,
-                    Err(_) => return IngestWorkerResult::Skipped,
-                };
-
-                let thumb_name = thumbnail_file_name(relative);
-                let thumb_staging_path = ctx.staging_thumbnails.join(&thumb_name);
-                if let Err(error) = fs::write(&thumb_staging_path, &photograph.thumbnail_jpeg) {
-                    return IngestWorkerResult::Failed(CatalogError::new(
-                        "thumbnail_write",
-                        format!(
-                            "Could not write staged thumbnail at {}: {error}",
-                            thumb_staging_path.display()
-                        ),
-                    ));
-                }
-
-                if let Some(limit) = faults.fail_after_copied {
-                    let slot = copied_slots.fetch_add(1, Ordering::SeqCst);
-                    if slot >= limit {
-                        return IngestWorkerResult::Failed(CatalogError::new(
-                            "import_fault",
-                            "Injected failure during copy.",
-                        ));
-                    }
-                }
-
-                let destination = ctx.staging_shoot.join(Path::new(relative));
-                // Created lazily, per photograph that actually survived prepare, so
-                // a source folder whose files all skipped never reaches the Catalog
-                // as an empty directory. `create_dir_all` tolerates the races
-                // between workers sharing a parent.
-                if let Some(parent) = destination.parent() {
-                    if let Err(error) = fs::create_dir_all(parent) {
-                        return IngestWorkerResult::Failed(CatalogError::new(
-                            "import_copy",
-                            format!(
-                                "Could not create destination folder at {}: {error}",
-                                parent.display()
-                            ),
-                        ));
-                    }
-                }
-
-                // Exact original-byte write from the in-memory read (no second source I/O).
-                if let Err(error) = fs::write(&destination, &bytes) {
-                    return IngestWorkerResult::Failed(CatalogError::new(
-                        "import_copy",
-                        format!(
-                            "Could not write {} to {}: {error}",
-                            source_absolute.display(),
-                            destination.display()
-                        ),
-                    ));
-                }
-
-                let file_name = Path::new(relative)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(relative)
-                    .to_string();
-
-                let thumbnail_relative_path = format!(
-                    "{}/{}/{}/{}",
-                    paths::PHOTART_DIR,
-                    paths::THUMBNAILS_DIR,
-                    ctx.shoot_name,
-                    thumb_name
-                );
-
-                IngestWorkerResult::Ready(PreparedItem {
-                    relative_path: relative.clone(),
-                    file_name,
-                    width: photograph.width,
-                    height: photograph.height,
-                    thumbnail_relative_path,
+                    result
                 })
-            })
-            .collect();
+                .collect()
+        });
 
         for result in results {
             match result {
-                IngestWorkerResult::Ready(item) => {
-                    prepared.push(item);
-                    progress(ImportProgress {
-                        phase: "preparing".into(),
-                        total: Some(total),
-                        prepared: Some(prepared.len() as u32),
-                    });
-                }
+                IngestWorkerResult::Ready(item) => prepared.push(item),
                 IngestWorkerResult::Skipped => {}
                 IngestWorkerResult::Failed(error) => return Err(error),
             }
         }
+        let processed = index * chunk_size + chunk.len();
+        let remaining = candidates.len() - processed;
+        progress(ImportProgress {
+            phase: "preparing".into(),
+            total: Some(total),
+            prepared: Some(prepared.len() as u32),
+            remaining_seconds: (remaining > 0).then(|| {
+                (started.elapsed().as_secs_f64() * remaining as f64 / processed as f64).ceil()
+                    as u64
+            }),
+        });
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[photart-import] Import: checked {processed}/{total} files ({} prepared)",
+                prepared.len()
+            );
+        }
+    }
+
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "[photart-import] Import worker totals (overlap; not elapsed time): source reads {:.2?}, previews {:.2?}, staged writes {:.2?}, pairing metadata {:.2?}",
+            read_time.total(), preview_time.total(), write_time.total(), metadata_time.total()
+        );
     }
 
     prepared.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
@@ -763,5 +935,35 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), CatalogError> {
         ))
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::candidate_pairs;
+
+    #[test]
+    fn raw_jpeg_candidates_require_one_of_each_with_the_same_folder_and_stem() {
+        let candidates = [
+            "first/frame.NEF",
+            "first/frame.jPeG",
+            "second/frame.jpg",
+            "second/frame.DNG",
+            "third/frame.ARW",
+            "other.JPG",
+            "ambiguous.CR3",
+            "ambiguous.jpg",
+            "ambiguous.jpeg",
+            "two.RAF",
+            "two.NEF",
+            "two.jpg",
+            "CASE.NEF",
+            "case.JPG",
+        ]
+        .map(str::to_owned);
+        let pairs = candidate_pairs(&candidates);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs["first/frame.NEF"], "first/frame.jPeG");
+        assert_eq!(pairs["second/frame.DNG"], "second/frame.jpg");
     }
 }

@@ -30,6 +30,7 @@ export const Scanning: Story = {
       phase: "scanning",
       total: null,
       prepared: null,
+      remainingSeconds: null,
     },
   },
 };
@@ -40,6 +41,7 @@ export const Preparing: Story = {
       phase: "preparing",
       total: 128,
       prepared: 37,
+      remainingSeconds: 35,
     },
   },
 };
@@ -50,6 +52,7 @@ export const Finalizing: Story = {
       phase: "finalizing",
       total: 128,
       prepared: 128,
+      remainingSeconds: null,
     },
   },
 };

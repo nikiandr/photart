@@ -20,6 +20,8 @@ export type ShootSummary = {
 
 export type PhotographEntry = {
   relativePath: string;
+  jpegCompanionPath?: string | null;
+  canRelinkJpegCompanion?: boolean;
   fileName: string;
   width: number;
   height: number;
@@ -73,6 +75,7 @@ export type ImportProgress = {
   phase: "scanning" | "preparing" | "finalizing" | string;
   total: number | null;
   prepared: number | null;
+  remainingSeconds: number | null;
 };
 
 export type ImportShootResult = {

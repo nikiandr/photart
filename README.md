@@ -38,6 +38,16 @@ installed Photart app:
 bun run tauri dev
 ```
 
+For import timing, look for `[photart-import]` in the terminal running
+`bun run tauri dev`. The Source check starts when you choose a folder, before
+Import copies any originals. The logs separate folder scans, preview generation,
+copying, RAW + JPEG metadata checks, and catalog finalization. Worker timings
+overlap; use the phase totals for elapsed time. The per-batch table prints each
+file as it finishes, with separate columns for source reads, decoder lock wait,
+preview work (excluding the lock wait), writes, and pairing metadata. Use
+`PHOTART_IMPORT_VERBOSE=1 bun run tauri dev` for individual preview stages, including
+embedded JPEG decoding and RAW sensor rendering. Filenames and paths are not logged.
+
 To start either frontend server independently:
 
 ```sh

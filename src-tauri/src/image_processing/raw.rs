@@ -3,6 +3,8 @@ use std::{ffi::c_void, marker::PhantomData, ptr::NonNull, slice};
 use chrono::{DateTime, Local};
 use image::{DynamicImage, ImageFormat, RgbImage};
 
+use crate::file_timing::{measure, FileTiming};
+
 use super::{
     apply_orientation, check_dimensions, decode_raster, read_orientation, CaptureDetails,
     ImageProcessingError, MAX_MEGAPIXELS,
@@ -102,19 +104,28 @@ impl Drop for Pixels {
     }
 }
 
-pub(super) fn decode(bytes: &[u8], goal: u32) -> Result<DynamicImage, ImageProcessingError> {
-    let mut decoder = Decoder::open(bytes)?;
-    let embedded = decoder.pixels(0).and_then(|pixels| {
-        decode_raster(pixels.bytes(), ImageFormat::Jpeg)
-            .ok()
-            .map(|image| apply_orientation(image, read_orientation(pixels.bytes())))
-    });
+pub(super) fn decode(
+    bytes: &[u8],
+    goal: u32,
+    timing: Option<&FileTiming>,
+) -> Result<DynamicImage, ImageProcessingError> {
+    let mut decoder = measure(timing, "LibRaw open", || Decoder::open(bytes))?;
+    let embedded =
+        measure(timing, "embedded preview extraction", || decoder.pixels(0)).and_then(|pixels| {
+            measure(timing, "embedded JPEG decode and orient", || {
+                decode_raster(pixels.bytes(), ImageFormat::Jpeg)
+                    .ok()
+                    .map(|image| apply_orientation(image, read_orientation(pixels.bytes())))
+            })
+        });
     let long_edge = |image: &DynamicImage| image.width().max(image.height());
     let rendered = if embedded
         .as_ref()
         .is_none_or(|image| long_edge(image) < goal)
     {
-        decoder.pixels(goal).and_then(Pixels::into_rgb)
+        measure(timing, "RAW sensor render fallback", || {
+            decoder.pixels(goal).and_then(Pixels::into_rgb)
+        })
     } else {
         None
     };

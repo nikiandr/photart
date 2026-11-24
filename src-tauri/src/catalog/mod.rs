@@ -3,6 +3,7 @@
 mod actions;
 mod create;
 mod detail;
+mod diagnostics;
 mod discover;
 mod error;
 mod film;
@@ -16,7 +17,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub use actions::{purge_shoot, update_shoot};
+pub use actions::{purge_shoot, set_jpeg_companion_link, update_shoot};
 #[allow(unused_imports)] // re-exported for Tauri commands
 pub use create::create_catalog;
 pub(crate) use detail::get_photograph_detail;
@@ -106,6 +107,8 @@ pub struct ShootDetails {
 #[serde(rename_all = "camelCase")]
 pub struct PhotographEntry {
     pub relative_path: String,
+    pub jpeg_companion_path: Option<String>,
+    pub can_relink_jpeg_companion: bool,
     pub file_name: String,
     pub width: u32,
     pub height: u32,
@@ -129,6 +132,7 @@ pub struct ImportProgress {
     pub phase: String,
     pub total: Option<u32>,
     pub prepared: Option<u32>,
+    pub remaining_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -581,6 +585,61 @@ mod tests {
             let shoot = get_shoot(&catalog_path, "Shoot").unwrap();
             assert!(shoot.photographs[0].original_absolute_path.is_none());
         }
+    }
+
+    #[test]
+    fn raw_jpeg_pair_persists_and_unlinks_without_removing_originals() {
+        let raw_fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../samples/raw/Apple-iPhone-6s-Plus.DNG");
+        let (_parent, _config_dir, catalog, _store) = create_ready_catalog("Format Pairs");
+        let source = TestDirectory::new("format-pairs");
+        std::fs::copy(&raw_fixture, source.path().join("paired.DNG")).unwrap();
+        std::fs::copy(&raw_fixture, source.path().join("conflicting.DNG")).unwrap();
+        write_jpeg(&source.path().join("paired.JPG"), 16, 8);
+        write_camera_jpeg(&source.path().join("conflicting.JPG"), "FUJIFILM", "X-T5");
+
+        let result = import_shoot(
+            &catalog,
+            source.path(),
+            "Shoot",
+            None,
+            |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(result.skipped_file_count, 0);
+        assert_eq!(result.shoot.summary.photograph_count, 3);
+        for filename in [
+            "paired.DNG",
+            "paired.JPG",
+            "conflicting.DNG",
+            "conflicting.JPG",
+        ] {
+            assert_eq!(
+                std::fs::read(catalog.join("Shoot").join(filename)).unwrap(),
+                std::fs::read(source.path().join(filename)).unwrap()
+            );
+        }
+
+        let shoot = get_shoot(&catalog, "Shoot").unwrap();
+        assert_eq!(shoot.photographs[0].jpeg_companion_path, None);
+        assert_eq!(
+            shoot.photographs[2].jpeg_companion_path.as_deref(),
+            Some("paired.JPG")
+        );
+
+        let unlinked = set_jpeg_companion_link(&catalog, "Shoot", "paired.DNG", false).unwrap();
+        assert_eq!(unlinked.summary.photograph_count, 4);
+        assert_eq!(unlinked.photographs[2].jpeg_companion_path, None);
+        assert!(unlinked.photographs[2].can_relink_jpeg_companion);
+        assert_eq!(get_shoot(&catalog, "Shoot").unwrap(), unlinked);
+        assert!(unlinked
+            .photographs
+            .iter()
+            .all(|photo| photo.original_absolute_path.is_some()));
+
+        let relinked = set_jpeg_companion_link(&catalog, "Shoot", "paired.DNG", true).unwrap();
+        assert_eq!(relinked, shoot);
     }
 
     #[test]

@@ -12,6 +12,36 @@ use super::{ShootDetails, ShootMedium};
 
 static ACTION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+pub fn set_jpeg_companion_link(
+    catalog_path: &Path,
+    shoot_name: &str,
+    raw_path: &str,
+    linked: bool,
+) -> Result<ShootDetails, CatalogError> {
+    let _cache = lock_detail_cache()?;
+    let mut manifest = manifest::read_manifest(catalog_path)?;
+    let shoot_index = find_shoot_index(&manifest.shoots, shoot_name)?;
+    let shoot = &mut manifest.shoots[shoot_index];
+    let companion = shoot
+        .photographs
+        .iter_mut()
+        .find(|photo| photo.relative_path == raw_path)
+        .and_then(|photo| photo.jpeg_companion.as_mut())
+        .ok_or_else(|| {
+            CatalogError::new("pair_not_found", "This RAW + JPEG pair was not found.")
+        })?;
+    let changed = companion.linked != linked;
+    if changed {
+        companion.linked = linked;
+        shoot.refresh_photograph_count();
+    }
+    let details = shoot_details_from_record(catalog_path, shoot)?;
+    if changed {
+        manifest::write_manifest(catalog_path, &manifest)?;
+    }
+    Ok(details)
+}
+
 pub fn update_shoot(
     catalog_path: &Path,
     shoot_name: &str,
@@ -330,6 +360,7 @@ mod tests {
                     width: 10,
                     height: 10,
                     thumbnail_relative_path: format!(".photart/thumbnails/{name}/frame.jpg"),
+                    jpeg_companion: None,
                 }],
             });
             manifest::write_manifest(&self.0, &catalog).unwrap();

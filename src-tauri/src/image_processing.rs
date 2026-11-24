@@ -8,6 +8,8 @@ use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat, ImageReader};
 use serde::Serialize;
 
+use crate::file_timing::{measure, FileTiming};
+
 mod heic;
 mod raw;
 mod tiff;
@@ -76,6 +78,44 @@ pub fn is_supported_extension(path: &Path) -> bool {
     SupportedFormat::from_path(path).is_some()
 }
 
+pub(crate) fn is_raw(path: &Path) -> bool {
+    SupportedFormat::from_path(path) == Some(SupportedFormat::Raw)
+}
+
+pub(crate) fn is_jpeg(path: &Path) -> bool {
+    SupportedFormat::from_path(path) == Some(SupportedFormat::Raster(ImageFormat::Jpeg))
+}
+
+pub(crate) fn pairing_capture(path: &Path, bytes: &[u8]) -> CaptureDetails {
+    let mut capture = Reader::new()
+        .read_from_container(&mut Cursor::new(bytes))
+        .ok()
+        .as_ref()
+        .map(read_capture_details)
+        .unwrap_or_default();
+    if is_raw(path) && (capture.camera.is_none() || capture.captured_at.is_none()) {
+        if let Ok(raw) = raw::capture_details(bytes) {
+            capture.camera = capture.camera.or(raw.camera);
+            capture.captured_at = capture.captured_at.or(raw.captured_at);
+        }
+    }
+    capture
+}
+
+impl CaptureDetails {
+    pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
+        self.camera
+            .as_ref()
+            .zip(other.camera.as_ref())
+            .is_some_and(|(first, second)| !first.eq_ignore_ascii_case(second))
+            || self
+                .captured_at
+                .as_ref()
+                .zip(other.captured_at.as_ref())
+                .is_some_and(|(first, second)| first != second)
+    }
+}
+
 pub(crate) fn uses_detail_cache(path: &Path) -> bool {
     SupportedFormat::from_path(path).is_some_and(SupportedFormat::needs_detail_jpeg)
 }
@@ -93,15 +133,29 @@ pub(crate) fn read_source(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub fn prepare_photograph(
+#[cfg(test)]
+fn prepare_photograph(
     path: &Path,
     bytes: &[u8],
 ) -> Result<PreparedPhotograph, ImageProcessingError> {
-    let (_decode_slot, image) = decode_oriented(path, bytes, MAX_THUMBNAIL_DIMENSION)?;
+    prepare_thumbnail(path, bytes, None)
+}
+
+pub(crate) fn prepare_thumbnail(
+    path: &Path,
+    bytes: &[u8],
+    timing: Option<&FileTiming>,
+) -> Result<PreparedPhotograph, ImageProcessingError> {
+    let (_decode_slot, image) = decode_oriented(path, bytes, MAX_THUMBNAIL_DIMENSION, timing)?;
     Ok(PreparedPhotograph {
         width: image.width(),
         height: image.height(),
-        thumbnail_jpeg: render_jpeg(&image, MAX_THUMBNAIL_DIMENSION, THUMBNAIL_JPEG_QUALITY)?,
+        thumbnail_jpeg: render_jpeg(
+            &image,
+            MAX_THUMBNAIL_DIMENSION,
+            THUMBNAIL_JPEG_QUALITY,
+            timing,
+        )?,
     })
 }
 
@@ -112,14 +166,15 @@ pub(crate) fn prepare_detail_jpeg(
     if !uses_detail_cache(path) {
         return Err(ImageProcessingError::UnsupportedFormat);
     }
-    let (_decode_slot, image) = decode_oriented(path, bytes, MAX_DETAIL_DIMENSION)?;
-    render_jpeg(&image, MAX_DETAIL_DIMENSION, DETAIL_JPEG_QUALITY)
+    let (_decode_slot, image) = decode_oriented(path, bytes, MAX_DETAIL_DIMENSION, None)?;
+    render_jpeg(&image, MAX_DETAIL_DIMENSION, DETAIL_JPEG_QUALITY, None)
 }
 
 fn decode_oriented(
     path: &Path,
     bytes: &[u8],
     goal: u32,
+    timing: Option<&FileTiming>,
 ) -> Result<(Option<std::sync::MutexGuard<'static, ()>>, DynamicImage), ImageProcessingError> {
     if bytes.len() as u64 > MAX_FILE_SIZE_BYTES {
         return Err(ImageProcessingError::TooLarge);
@@ -127,20 +182,28 @@ fn decode_oriented(
 
     let format = SupportedFormat::from_path(path).ok_or(ImageProcessingError::UnsupportedFormat)?;
     let decode_slot = format.needs_detail_jpeg().then(|| {
-        DERIVATIVE_DECODE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
+        measure(timing, "decoder lock wait", || {
+            DERIVATIVE_DECODE
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+        })
     });
     let oriented = match format {
-        SupportedFormat::Raw => raw::decode(bytes, goal)?,
-        SupportedFormat::Heic => heic::decode(bytes)?,
-        SupportedFormat::Tiff => {
+        SupportedFormat::Raw => raw::decode(bytes, goal, timing)?,
+        SupportedFormat::Heic => measure(timing, "HEIC decode", || heic::decode(bytes))?,
+        SupportedFormat::Tiff => measure(timing, "TIFF decode and orient", || {
             let orientation = tiff::inspect(bytes)?;
-            apply_orientation(decode_raster(bytes, ImageFormat::Tiff)?, orientation)
-        }
-        SupportedFormat::Raster(raster) => {
-            apply_orientation(decode_raster(bytes, raster)?, read_orientation(bytes))
-        }
+            Ok(apply_orientation(
+                decode_raster(bytes, ImageFormat::Tiff)?,
+                orientation,
+            ))
+        })?,
+        SupportedFormat::Raster(raster) => measure(timing, "decode and orient", || {
+            Ok(apply_orientation(
+                decode_raster(bytes, raster)?,
+                read_orientation(bytes),
+            ))
+        })?,
     };
 
     Ok((decode_slot, oriented))
@@ -264,22 +327,26 @@ fn render_jpeg(
     image: &DynamicImage,
     max_dimension: u32,
     quality: u8,
+    timing: Option<&FileTiming>,
 ) -> Result<Vec<u8>, ImageProcessingError> {
-    let rgb = if image.width().max(image.height()) > max_dimension {
-        image.thumbnail(max_dimension, max_dimension).into_rgb8()
-    } else {
-        image.to_rgb8()
-    };
+    let rgb = measure(timing, "thumbnail resize and RGB conversion", || {
+        if image.width().max(image.height()) > max_dimension {
+            image.thumbnail(max_dimension, max_dimension).into_rgb8()
+        } else {
+            image.to_rgb8()
+        }
+    });
     let mut buffer = Cursor::new(Vec::new());
     let mut encoder = JpegEncoder::new_with_quality(&mut buffer, quality);
-    encoder
-        .encode(
+    measure(timing, "JPEG encode", || {
+        encoder.encode(
             rgb.as_raw(),
             rgb.width(),
             rgb.height(),
             image::ExtendedColorType::Rgb8,
         )
-        .map_err(|_| ImageProcessingError::PreviewError)?;
+    })
+    .map_err(|_| ImageProcessingError::PreviewError)?;
 
     Ok(buffer.into_inner())
 }

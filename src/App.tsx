@@ -21,6 +21,7 @@ import {
   loadCatalogState,
   loadShoot,
   purgeShoot,
+  setJpegCompanionLink,
   updateShoot,
 } from "@/lib/catalog";
 import { editionName } from "@/lib/edition";
@@ -274,13 +275,13 @@ function App() {
       if (requestId !== shootRequestIdRef.current) {
         return;
       }
-      setView({
+      setView((current) => ({
         kind: "shoot",
-        catalog,
+        catalog: current.kind === "shoot" ? replaceShootSummary(current.catalog, shootName, shoot) : catalog,
         shoot,
         skippedNoticeCount: null,
         loading: false,
-      });
+      }));
     } catch {
       if (requestId !== shootRequestIdRef.current) {
         return;
@@ -309,6 +310,7 @@ function App() {
         phase: "scanning",
         total: null,
         prepared: null,
+        remainingSeconds: null,
       },
       importId,
       previous: args.previous,
@@ -368,43 +370,46 @@ function App() {
   async function handleUpdateShoot(shootName: string, newName: string, medium: ShootMedium | null) {
     const renamed = await updateShoot(shootName, newName, medium);
     shootRequestIdRef.current += 1;
+    applyShootUpdate(shootName, renamed);
+  }
 
+  function applyShootUpdate(shootName: string, updated: ShootDetails) {
     setView((current) => {
       if (current.kind === "home") {
         return {
           ...current,
-          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+          catalog: replaceShootSummary(current.catalog, shootName, updated),
         };
       }
       if (current.kind === "confirm-shoot") {
         return {
           ...current,
-          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+          catalog: replaceShootSummary(current.catalog, shootName, updated),
           previous:
             current.previous !== "home" &&
             current.previous.shootName === shootName
-              ? { shootName: renamed.summary.name }
+              ? { shootName: updated.summary.name }
               : current.previous,
         };
       }
       if (current.kind === "importing") {
         return {
           ...current,
-          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+          catalog: replaceShootSummary(current.catalog, shootName, updated),
           previous:
             current.previous !== "home" &&
             current.previous.shootName === shootName
-              ? { shootName: renamed.summary.name }
+              ? { shootName: updated.summary.name }
               : current.previous,
         };
       }
       if (current.kind === "shoot") {
         return {
           ...current,
-          catalog: replaceShootSummary(current.catalog, shootName, renamed),
+          catalog: replaceShootSummary(current.catalog, shootName, updated),
           shoot:
             current.shoot.summary.name === shootName
-              ? renamed
+              ? updated
               : current.shoot,
           loading:
             current.shoot.summary.name === shootName
@@ -707,6 +712,11 @@ function App() {
           shoot={view.shoot}
           skippedNoticeCount={view.skippedNoticeCount}
           loading={view.loading}
+          onSetPairLinked={async (rawPath, linked) => {
+            const shootName = view.shoot.summary.name;
+            const updated = await setJpegCompanionLink(shootName, rawPath, linked);
+            applyShootUpdate(shootName, updated);
+          }}
         />
       ) : null}
     </WorkspaceShell>

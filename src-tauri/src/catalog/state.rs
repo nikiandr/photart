@@ -199,6 +199,15 @@ fn photograph_entry_from_record(
 
     Ok(PhotographEntry {
         relative_path: photo.relative_path.clone(),
+        jpeg_companion_path: photo
+            .jpeg_companion
+            .as_ref()
+            .filter(|companion| companion.linked)
+            .map(|companion| companion.relative_path.clone()),
+        can_relink_jpeg_companion: photo
+            .jpeg_companion
+            .as_ref()
+            .is_some_and(|companion| !companion.linked),
         file_name: photo.file_name.clone(),
         width: photo.width,
         height: photo.height,

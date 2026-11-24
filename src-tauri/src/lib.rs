@@ -1,5 +1,6 @@
 mod app_config;
 mod catalog;
+mod file_timing;
 mod image_processing;
 
 use std::path::{Path, PathBuf};
@@ -121,6 +122,26 @@ async fn update_shoot(
         CatalogError::new(
             "shoot_update_join",
             format!("Shoot changes could not be applied: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
+async fn set_jpeg_companion_link(
+    app: AppHandle,
+    shoot_name: String,
+    raw_path: String,
+    linked: bool,
+) -> Result<ShootDetails, CatalogError> {
+    let catalog_path = require_ready_catalog_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        catalog::set_jpeg_companion_link(&catalog_path, &shoot_name, &raw_path, linked)
+    })
+    .await
+    .map_err(|error| {
+        CatalogError::new(
+            "pair_update_join",
+            format!("Pair could not be updated: {error}"),
         )
     })?
 }
@@ -308,6 +329,7 @@ pub fn run() {
             get_photograph_detail,
             get_photograph_capture,
             update_shoot,
+            set_jpeg_companion_link,
             inspect_source_medium,
             purge_shoot,
             import_shoot,

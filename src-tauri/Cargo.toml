@@ -35,3 +35,11 @@ exif = { package = "kamadak-exif", version = "0.6" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 rayon = "1"
 
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3

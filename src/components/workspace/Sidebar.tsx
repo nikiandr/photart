@@ -124,7 +124,7 @@ export function Sidebar({
       )}
       aria-disabled={disabled || undefined}
     >
-      <div className="shrink-0 border-b border-sidebar-border px-3 py-3">
+      <div className="flex h-14 shrink-0 items-center border-b border-sidebar-border px-3">
         <PhotartBrand detail={catalogName} />
       </div>
 

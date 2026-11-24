@@ -186,7 +186,7 @@ export function PhotographDetailView({
       className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background text-foreground outline-none"
       onKeyDown={handleKeyDown}
     >
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-3 py-2">
+      <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-3">
         <Button ref={backButton} variant="ghost" onClick={onClose} aria-keyshortcuts="Escape">
           Back to grid <kbd aria-hidden="true" className="font-mono text-xs text-muted-foreground">Esc</kbd>
         </Button>
